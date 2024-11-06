@@ -1,0 +1,24 @@
+name: py311_mfd
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - tqdm
+  # Data Analysis
+  - scipy
+  - numpy
+  - pandas
+  - pyarrow
+  - fastparquet
+  # Plotting
+  - matplotlib
+  - seaborn
+  # Machine learning
+  - scikit-learn
+  # Jupyter Environment
+  - ipykernel
+  - jupyterlab
+  - jupyter
+  - ipywidgets
