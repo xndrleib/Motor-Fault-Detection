@@ -6,12 +6,6 @@ if [[ ! -f "py311_mfd.yml" ]]; then
     exit 1
 fi
 
-# Check if requirements.txt exists
-if [[ ! -f "requirements.txt" ]]; then
-    echo "Error: requirements.txt file not found!"
-    exit 1
-fi
-
 # Initialize Conda for the current shell session
 if ! command -v conda &> /dev/null; then
     echo "Error: Conda is not available in this shell. Please ensure Conda is installed."
@@ -34,10 +28,10 @@ conda activate "$ENV_NAME"
 # Check if we're on Linux for GPU-compatible PyTorch installation
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     echo "Detected Linux OS. Installing GPU-compatible PyTorch..."
-    pip install torch --index-url https://download.pytorch.org/whl/cu118
+    conda install pytorch pytorch-cuda=11.8 -c pytorch -c nvidia -y
 else
     echo "Non-Linux OS detected. Installing CPU-only PyTorch..."
-    pip install torch
+    conda install pytorch::pytorch -c pytorch -y
 fi
 
 echo "Setup complete. The $ENV_NAME environment is ready."

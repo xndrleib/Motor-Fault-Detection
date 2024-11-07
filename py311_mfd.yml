@@ -8,7 +8,7 @@ dependencies:
   - tqdm
   # Data Analysis
   - scipy
-  - numpy
+  - numpy=1.26.4 
   - pandas
   - pyarrow
   - fastparquet
