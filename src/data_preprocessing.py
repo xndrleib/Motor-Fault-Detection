@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 from matplotlib import pyplot as plt
 
+
 def read_oscilloscope_data(file_path, output_path=None):
     time = []
     channel_1 = []
@@ -97,7 +98,7 @@ def process_time_series(file_path, output_dir, window_length=20000, shift=20, f_
             'Amplitude': yf
         })
         
-        output_file_path = os.path.join(output_dir, f'Anomalous_{file_counter}.csv')
+        output_file_path = os.path.join(output_dir, f'Window_{file_counter}.csv')
         transformed_df.to_csv(output_file_path, index=False)
         file_counter += 1
 
@@ -251,6 +252,46 @@ def plot_random_segments(peak_segments, num_segments=10):
         ax.set_title(f'Segment {random_indices[i]}')
         ax.set_xlabel('Frequency Index')
         ax.set_ylabel('Amplitude')
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_random_files_from_directory(directory, num_files=20):
+    """
+    Plots data from a specified number of random .csv files in the directory.
+    
+    Parameters:
+    directory (str): Path to the directory containing .csv files.
+    num_files (int): Number of files to randomly select and plot.
+    """
+    
+    # List .csv files in the directory
+    files = [f for f in os.listdir(directory) if f.endswith('.csv')]
+    
+    # Select random files based on num_files or available files if fewer
+    random_files = random.sample(files, min(num_files, len(files)))
+    num_plots = len(random_files)
+
+    # Calculate rows and columns needed to display the plots
+    cols = min(4, num_plots)  # Set a maximum of 4 columns
+    rows = math.ceil(num_plots / cols)  # Determine rows based on the number of plots
+
+    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
+    axes = axes.flatten() if num_plots > 1 else [axes]  # Flatten axes array if more than one plot
+
+    for i, file in enumerate(random_files):
+        file_path = os.path.join(directory, file)
+        df = pd.read_csv(file_path)
+        data = df['Data'].values
+
+        axes[i].plot(data)
+        axes[i].set_title(file)
+        axes[i].set_xlabel('Index')
+        axes[i].set_ylabel('Value')
+
+    # Hide any unused subplots
+    for j in range(i + 1, len(axes)):
+        axes[j].axis('off')
 
     plt.tight_layout()
     plt.show()
