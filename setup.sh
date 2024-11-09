@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Check if py311_mfd.yml exists
-if [[ ! -f "py311_mfd.yml" ]]; then
-    echo "Error: py311_mfd.yml file not found!"
+# Check if environment.yml exists
+if [[ ! -f "environment.yml" ]]; then
+    echo "Error: environment.yml file not found!"
     exit 1
 fi
 
@@ -15,11 +15,11 @@ fi
 eval "$(conda shell.bash hook)"
 
 # Create the conda environment from the YAML file
-echo "Creating conda environment from py311_mfd.yml..."
-conda env create -f py311_mfd.yml
+echo "Creating conda environment from environment.yml..."
+conda env create -f environment.yml
 
 # Extract the environment name from the YAML file
-ENV_NAME=$(grep 'name:' py311_mfd.yml | awk '{print $2}')
+ENV_NAME=$(grep 'name:' environment.yml | awk '{print $2}')
 
 # Activate the environment
 echo "Activating environment: $ENV_NAME"
