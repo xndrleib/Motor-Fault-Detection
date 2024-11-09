@@ -256,7 +256,7 @@ def plot_random_segments(peak_segments, num_segments=10):
     plt.tight_layout()
     plt.show()
 
-def plot_random_files_from_directory(directory, num_files=20):
+def plot_random_files_from_directory(directory, num_files=8):
     """
     Plots data from a specified number of random .csv files in the directory.
     
