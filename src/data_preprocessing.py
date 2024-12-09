@@ -5,6 +5,8 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 from matplotlib import pyplot as plt
 
+from scipy.signal import convolve
+import glob
 
 def read_oscilloscope_data(file_path, output_path=None):
     time = []
@@ -315,3 +317,27 @@ def count_labels(loader):
             else:
                 label_counts[label] = 1
     return label_counts
+
+def add_smoothed_peak_to_files(input_directory, output_directory, peak_height_hybrid, peak_center_hybrid, peak_base_width, kernel_size):
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+        
+    for csv_file in glob.glob(input_directory + '/*.csv'):
+        data = pd.read_csv(csv_file)
+
+        indices = np.arange(len(data))
+        triangle_peak = np.zeros(len(data))
+        half_base_width = peak_base_width // 2
+        start_index = peak_center_hybrid - half_base_width
+        end_index = start_index + peak_base_width
+        triangle_peak[start_index:start_index + half_base_width] = np.linspace(0, peak_height_hybrid, half_base_width)
+        triangle_peak[start_index + half_base_width:end_index] = np.linspace(peak_height_hybrid, 0, peak_base_width - half_base_width)
+
+        gaussian_kernel = np.exp(-np.linspace(-2, 2, kernel_size)**2)
+        gaussian_kernel /= gaussian_kernel.sum() 
+
+        smoothed_peak = convolve(triangle_peak, gaussian_kernel, mode='same')
+
+        data_with_smoothed_peak = data.iloc[:, 0] + smoothed_peak
+
+        return data_with_smoothed_peak
