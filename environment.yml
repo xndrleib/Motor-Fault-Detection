@@ -21,3 +21,4 @@ dependencies:
   - jupyterlab
   - jupyter
   - ipywidgets
+  - nb_conda_kernels

@@ -73,36 +73,40 @@ def generate_synthetic_peaks(vae_model, num_samples, latent_dim, segment_mins, s
 
 def train_resnet_model(model, train_loader, test_loader, device, num_epochs=10):
     """
-    Trains and evaluates the ResNet model.
+    Trains and evaluates the ResNet model with progress tracking using tqdm.
 
     Parameters:
     - model: ResNet model instance.
     - train_loader: DataLoader for training data.
     - test_loader: DataLoader for testing data.
-    - device: Device to run the training on ('cpu' or 'cuda').
+    - device: Device to run the training on.
     - num_epochs: Number of epochs to train.
     """
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    # Training loop
+    # Training loop with tqdm
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
 
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+        # Initialize tqdm for batch progress
+        with tqdm(total=len(train_loader), desc=f'Epoch {epoch+1}/{num_epochs}', unit='batch') as pbar:
+            for inputs, labels in train_loader:
+                inputs, labels = inputs.to(device), labels.to(device)
 
-            # Forward pass
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
+                # Forward pass
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
 
-            # Backward and optimize
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                # Backward and optimize
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            running_loss += loss.item() * inputs.size(0)
+                running_loss += loss.item() * inputs.size(0)
+                pbar.update(1)
+                pbar.set_postfix(loss=loss.item())
 
         epoch_loss = running_loss / len(train_loader.dataset)
         print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}')
@@ -115,7 +119,7 @@ def train_resnet_model(model, train_loader, test_loader, device, num_epochs=10):
     all_predictions = []
 
     with torch.no_grad():
-        for inputs, labels in test_loader:
+        for inputs, labels in tqdm(test_loader, desc='Evaluating', unit='batch'):
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
