@@ -48,7 +48,7 @@ The **Motor Fault Detection** project is designed to detect anomalies in motor o
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yourusername/Motor-Fault-Detection.git
+   git clone https://github.com/xndrleib/Motor-Fault-Detection.git
    cd Motor-Fault-Detection
    ```
 
