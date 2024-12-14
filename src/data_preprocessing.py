@@ -7,6 +7,8 @@ from matplotlib import pyplot as plt
 
 from scipy.signal import convolve
 import glob
+import random
+import math
 
 def read_oscilloscope_data(file_path, output_path=None):
     time = []
