@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motor_fault_detection"
+version = "0.1.0"
+description = "A pipeline for detecting anomalies in motor operations using signal processing and machine learning."
+readme = "README.md"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+
+[tool.setuptools]
+packages = ["src"]

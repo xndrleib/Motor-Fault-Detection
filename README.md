@@ -9,6 +9,7 @@ The **Motor Fault Detection** project is designed to detect anomalies in motor o
 ```
 ├── .gitignore
 ├── README.md                       # Project documentation
+├── pyproject.toml                  # Project metadata and build configuration
 ├── data/                           # Data directory
 │   ├── raw/                        # Raw data files
 │   └── processed/                  # Processed data files
@@ -17,7 +18,6 @@ The **Motor Fault Detection** project is designed to detect anomalies in motor o
 │   ├── 01_Data-Preprocessing.ipynb # Data preprocessing steps
 │   ├── 02_VAE-Training-and-Synthetic-Peak-Generation.ipynb
 │   └── 03_ResNet-Training.ipynb    # ResNet training steps
-├── setup.py                        # Setup script for Python package
 ├── setup.sh                        # Environment setup shell script
 └── src/                            # Source code
     ├── __init__.py                 # Package initialization
@@ -45,25 +45,31 @@ The **Motor Fault Detection** project is designed to detect anomalies in motor o
 
 ## Installation
 
-1. Clone the repository:
+### 1. Clone the Repository
 
-   ```bash
-   git clone https://github.com/xndrleib/Motor-Fault-Detection.git
-   cd Motor-Fault-Detection
-   ```
+```bash
+git clone https://github.com/xndrleib/Motor-Fault-Detection.git
+cd Motor-Fault-Detection
+```
 
-2. Install dependencies using Conda:
+### 2. Set Up the Conda Environment
 
-   ```bash
-   bash setup.sh
-   conda activate py311_mfd
-   ```
+Ensure Conda is installed, then create and activate the environment:
 
-3. Install the project package:
+```bash
+conda env create -f environment.yml
+conda activate py311_mfd
+```
 
-   ```bash
-   pip install .
-   ```
+### 3. Install the Project in Editable Mode
+
+Install the package using the modern `pyproject.toml` setup:
+
+```bash
+pip install -e .
+```
+
+---
 
 ## Usage
 
@@ -86,12 +92,18 @@ Train the ResNet model using `03_ResNet-Training.ipynb`:
 - Load preprocessed and synthetic data.
 - Train for binary or multi-class classification.
 
+---
+
 ## Key Files
 
+- **`pyproject.toml`**: Project metadata and build system configuration.
+- **`environment.yml`**: Conda environment dependencies.
 - **`data_preprocessing.py`**: Utilities for transforming and preprocessing time-series data.
 - **`models.py`**: Definitions of ResNet and VAE architectures.
 - **`train.py`**: Functions for training models and generating synthetic peaks.
 - **`utils.py`**: Helper functions for file management and data visualization.
+
+---
 
 ## **Data Description**
 

@@ -965,3 +965,4 @@ pyrightconfig.json
 
 # Processed data
 data/processed/*
+!data/processed/.gitkeep
