@@ -90,7 +90,7 @@ Use `02_VAE-Training-and-Synthetic-Peak-Generation.ipynb` to:
 
 Train the ResNet model using `03_ResNet-Training.ipynb`:
 - Load preprocessed and synthetic data.
-- Train for binary or multi-class classification.
+- Train for binary classification.
 
 ---
 
