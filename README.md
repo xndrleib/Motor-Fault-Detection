@@ -93,7 +93,7 @@ Train the ResNet model using `03_ResNet-Training.ipynb`:
 - **`train.py`**: Functions for training models and generating synthetic peaks.
 - **`utils.py`**: Helper functions for file management and data visualization.
 
-### **Data Description**
+## **Data Description**
 
 The dataset consists of oscilloscope data files that capture time-series measurements of motor operations under various conditions.
 
