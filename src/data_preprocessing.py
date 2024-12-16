@@ -27,7 +27,7 @@ def read_oscilloscope_data(file_path, output_path=None):
                 time.append(float(parts[0].strip()))
                 channel_1.append(float(parts[1].strip()))
 
-    df = pd.DataFrame({'Time (ms)': time, 'Data': channel_1})
+    df = pd.DataFrame({'Time': time, 'Data': channel_1})
     if output_path:
         df.to_csv(output_path, index=False)
     return df
@@ -75,13 +75,13 @@ def time_to_freq_transform(df, f_sampling, db=True, cutoff_freq=None):
     return yf, freqs
 
 
-def process_time_series(file_path, output_dir, window_length=20000, shift=20, f_sampling=1.0, db=True, cutoff_freq=250):
+def process_time_series(input_data, output_dir, window_length=20000, shift=20, f_sampling=1.0, db=True, cutoff_freq=250):
     """
     Applies a sliding window over time series data, performs FFT on each window,
     and saves the transformed data.
     
     Parameters:
-    - file_path: Path to the CSV file with time-series data.
+    - input_data: Path to the CSV file with time-series data or a pandas DataFrame.
     - output_dir: Directory to save the transformed window files.
     - window_length: Number of samples in each window.
     - shift: Number of samples to shift the window for each iteration.
@@ -89,9 +89,18 @@ def process_time_series(file_path, output_dir, window_length=20000, shift=20, f_
     - db: Boolean flag to convert FFT values to decibel scale.
     - cutoff_freq: Frequency cutoff for filtering FFT results.
     """
-    df = pd.read_csv(file_path)
+    # Determine if input_data is a file path or a DataFrame
+    if isinstance(input_data, str):  # If file path
+        df = pd.read_csv(input_data)
+    elif isinstance(input_data, pd.DataFrame):  # If DataFrame
+        df = input_data
+    else:
+        raise ValueError("input_data must be a file path (str) or a pandas DataFrame.")
+    
+    # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
+    # Sliding window processing
     file_counter = 1
     for start in range(0, len(df) - window_length + 1, shift):
         window_df = df.iloc[start:start + window_length]
@@ -102,6 +111,7 @@ def process_time_series(file_path, output_dir, window_length=20000, shift=20, f_
             'Amplitude': yf
         })
         
+        # Save the transformed window
         output_file_path = os.path.join(output_dir, f'Window_{file_counter}.csv')
         transformed_df.to_csv(output_file_path, index=False)
         file_counter += 1
@@ -327,7 +337,6 @@ def add_smoothed_peak_to_files(input_directory, output_directory, peak_height_hy
     for csv_file in glob.glob(input_directory + '/*.csv'):
         data = pd.read_csv(csv_file)
 
-        indices = np.arange(len(data))
         triangle_peak = np.zeros(len(data))
         half_base_width = peak_base_width // 2
         start_index = peak_center_hybrid - half_base_width

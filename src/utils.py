@@ -2,6 +2,7 @@ import numpy as np
 import shutil
 import os
 import random
+import matplotlib.pyplot as plt
 
 def dataloader_to_numpy(dataloader):
     """
@@ -79,3 +80,44 @@ def rename_folder(current_folder_path, new_folder_path):
         return f"Error: The folder '{current_folder_path}' does not exist."
     except Exception as e:
         return f"An error occurred: {e}"
+    
+
+def plot_spectrum(df, freq_col="Frequency (Hz)", amp_col="Amplitude",
+                          title="Frequency Spectrum", xlabel="Frequency (Hz)",
+                          ylabel="Amplitude (dB)", save_path=None):
+    """
+    Plots the frequency spectrum
+    
+    Parameters:
+    - df: Pandas DataFrame containing frequency and amplitude data.
+    - freq_col: Column name for frequency data in the DataFrame (default: "Frequency (Hz)").
+    - amp_col: Column name for amplitude data in the DataFrame (default: "Amplitude").
+    - title: Title of the plot (default: "Frequency Spectrum").
+    - xlabel: Label for the x-axis (default: "Frequency (Hz)").
+    - ylabel: Label for the y-axis (default: "Amplitude (dB)").
+    - save_path: Optional file path to save the plot as an image.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Plot the spectrum
+    ax.plot(df[freq_col], df[amp_col], label='Spectrum', color='blue')
+    
+    # Set titles and labels
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    
+    # Add grid lines
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    
+    # Reference line at 0 dB (optional)
+    ax.axhline(y=0, color='black', linewidth=0.8, linestyle='--')
+    
+    # Add a legend
+    ax.legend(loc='best')
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {save_path}")
+    else:
+        plt.show()
