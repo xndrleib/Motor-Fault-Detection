@@ -1,160 +1,227 @@
 import math
-from typing import List, Dict
+from decimal import Decimal, getcontext
+from typing import Dict, List
 
+# Set a higher precision for Decimal calculations
+getcontext().prec = 50
 
-def get_type1_freqs(engine_config: Dict[str, float], n_range: range = range(1, 4)) -> List[float]:
+def safe_cos(beta: Decimal) -> Decimal:
+    # Compute cosine using Decimal's local context
+    # Convert beta (Decimal) to float for math.cos,
+    # then back to Decimal for consistency
+    val = Decimal(math.cos(float(beta)))
+    return val
+
+def get_rotor_bar_freqs(engine_config: Dict[str, float], n_range=range(1,4)) -> List[float]:
     """
-    Calculate frequencies associated with rotor bar defects.
-
-    Args:
-        engine_config (dict): A dictionary containing engine parameters:
-            - 's' (float): Slip of the motor.
-            - 'f1' (float): Supply frequency.
-        n_range (range): Range of harmonics to consider.
-
-    Returns:
-        list: Frequencies related to rotor bar defects.
+    Compute rotor bar defect frequencies for an induction motor.
+    
+    Formula:
+        f = f1 * (1 ± 2 * n * s)
+    
+    Parameters
+    ----------
+    engine_config : dict
+        'f1': Supply frequency (Hz)
+        's' : Slip (unitless)
+    n_range : range, optional
+    
+    Returns
+    -------
+    List[float]
+    
+    References
+    ----------
+    [1] Thomson & Culbert (2014)
+    [2] Bellini et al. (2008)
     """
-    s = engine_config['s']
-    f1 = engine_config['f1']
+    f1 = Decimal(str(engine_config['f1']))
+    s = Decimal(str(engine_config['s']))
+    
     freqs = []
     for n in n_range:
-        assert n > 0, f"Harmonic index n must be positive. Got n={n}."
-        assert isinstance(n, int), f"Harmonic index n must be an integer. Got type={type(n)}."
-        delta = 2 * n * s
-        freqs.extend([(1 + delta) * f1, (1 - delta) * f1])
-    return freqs
+        n_d = Decimal(n)
+        delta = Decimal('2') * n_d * s
+        f_plus = f1 * (Decimal('1') + delta)
+        f_minus = f1 * (Decimal('1') - delta)
+        freqs.extend([f_plus, f_minus])
+    # Convert back to float for final output
+    return sorted(float(f) for f in freqs)
 
-
-def get_type2_freqs(engine_config: Dict[str, float], n_range: range = range(1, 4)) -> List[float]:
+def get_eccentricity_freqs(engine_config: Dict[str, float], n_range=range(1,4), method='slot-based') -> List[float]:
     """
-    Calculate frequencies associated with air-gap eccentricity.
-
-    Args:
-        engine_config (dict): A dictionary containing engine parameters:
-            - 'R_s' (float): Stator radius.
-            - 'p' (int): Number of pole pairs.
-            - 's' (float): Slip of the motor.
-            - 'f1' (float): Supply frequency.
-        n_range (range): Range of harmonics to consider.
-
-    Returns:
-        list: Frequencies related to air-gap eccentricity.
+    Compute air-gap eccentricity frequencies.
+    
+    Methods:
+    - 'slot-based': f = |f1 ± n*(R_s/p)*f_r|
+    - 'simple': f = f1 ± n*f_r
+    
+    Parameters
+    ----------
+    engine_config : dict
+        'f1', 'f_r', 'R_s', 'p'
+    n_range : range
+    method : str
+    
+    Returns
+    -------
+    List[float]
+    
+    Raises
+    ------
+    ValueError: If p ≈ 0
     """
-    R_s = engine_config['R_s']
-    p = engine_config['p']
-    s = engine_config['s']
-    f1 = engine_config['f1']
+    f1 = Decimal(str(engine_config['f1']))
+    f_r = Decimal(str(engine_config['f_r']))
+    R_s = Decimal(str(engine_config['R_s']))
+    p = Decimal(str(engine_config['p']))
+    
+    if p == 0:
+        raise ValueError("Number of pole pairs p must not be zero to avoid division by zero.")
+    
     freqs = []
-    base = R_s * (1 - s) / p
-    offset = (1 - s) / p
-
     for n in n_range:
-        assert n > 0, f"Harmonic index n must be positive. Got n={n}."
-        assert isinstance(n, int), f"Harmonic index n must be an integer. Got type={type(n)}."
-        freqs.extend([f1 * (base + n + offset), 
-                      f1 * (base + n - offset), 
-                      f1 * (base - n + offset), 
-                      f1 * (base - n - offset)])
-    return freqs
+        n_d = Decimal(n)
+        if method == 'slot-based':
+            factor = (R_s/p)*f_r
+            f_plus = f1 + n_d*factor
+            f_minus = f1 - n_d*factor
+        else:
+            f_plus = f1 + n_d*f_r
+            f_minus = f1 - n_d*f_r
+        freqs.extend([f_plus, f_minus])
+    return sorted(float(f) for f in freqs)
 
-
-def get_type3_freqs(engine_config: Dict[str, float], n_range: range = range(1, 4), k_range: range = range(1, 4)) -> List[float]:
+def get_itsc_freqs(engine_config: Dict[str, float], k_values=range(1,4), m_range=range(1,4)) -> List[float]:
     """
-    Calculate frequencies associated with inter-turn short circuits.
-
-    Args:
-        engine_config (dict): A dictionary containing engine parameters:
-            - 'f1' (float): Supply frequency.
-            - 'p' (int): Number of pole pairs.
-            - 's' (float): Slip of the motor.
-        n_range (range): Range of primary harmonics to consider.
-        k_range (range): Range of secondary harmonics to consider.
-
-    Returns:
-        list: Frequencies related to inter-turn short circuits.
+    Compute inter-turn short circuit related frequencies.
+    
+    Formulae often consider:
+    - k*f1 and sidebands (k*f1 ± m*f_r)
+    
+    Parameters
+    ----------
+    engine_config : dict
+        'f1', 'f_r'
+    k_values : range
+    m_range : range
+    
+    Returns
+    -------
+    List[float]
     """
-    f1 = engine_config['f1']
-    p = engine_config['p']
-    s = engine_config['s']
+    f1 = Decimal(str(engine_config['f1']))
+    f_r = Decimal(str(engine_config['f_r']))
     freqs = []
-    base_factor = (1 - s) / p
-
-    for n in n_range:
-        assert n > 0, f"Harmonic index n must be positive. Got n={n}."
-        assert isinstance(n, int), f"Harmonic index n must be an integer. Got type={type(n)}."
-        for k in k_range:
-            assert k > 0, f"Harmonic index k must be positive. Got k={k}."
-            assert isinstance(k, int), f"Harmonic index k must be an integer. Got type={type(k)}."
-            freqs.extend([f1 * (n * base_factor + k), 
-                          f1 * (n * base_factor - k)])
-    return freqs
-
+    
+    for k in k_values:
+        k_d = Decimal(k)
+        main = k_d * f1
+        candidates = [main]
+        for m in m_range:
+            m_d = Decimal(m)
+            candidates.append(main + m_d*f_r)
+            candidates.append(main - m_d*f_r)
+        freqs.extend(candidates)
+    return sorted(float(f) for f in freqs)
 
 def get_bearing_freqs(engine_config: Dict[str, float], defect_type: str) -> List[float]:
     """
-    Calculate frequencies for bearing defects based on defect type.
-
-    Args:
-        engine_config (dict): A dictionary containing bearing parameters:
-            - 'D_pit' (float): Pitch diameter.
-            - 'D_ball' (float): Ball diameter.
-            - 'f_r' (float): Rotational frequency.
-            - 'beta' (float): Contact angle in radians.
-            - 'n' (int): Number of rolling elements (only required for outer/inner race).
-        defect_type (str): Type of defect. Options are:
-            - 'rolling_element'
-            - 'outer_race'
-            - 'inner_race'
-
-    Returns:
-        list: Frequencies related to the specified bearing defect.
+    Compute bearing defect frequencies.
+    
+    - Outer Race (BPFO):
+      BPFO = (n/2)*f_r * (1 - (D_ball/(D_pit*cos(beta))))
+    - Inner Race (BPFI):
+      BPFI = (n/2)*f_r * (1 + (D_ball/(D_pit*cos(beta))))
+    - Rolling Element (BSF):
+      BSF = (D_pit/(2*D_ball))*f_r * [1 - (D_ball/(D_pit*cos(beta)))^2]
+    
+    Parameters
+    ----------
+    engine_config : dict
+        'n', 'D_pit', 'D_ball', 'f_r', 'beta'
+    defect_type : str
+    
+    Returns
+    -------
+    List[float]
+    
+    Raises
+    ------
+    ValueError:
+        If cos(beta) ≈ 0 or invalid defect_type.
     """
-    D_pit = engine_config['D_pit']
-    D_ball = engine_config['D_ball']
-    f_r = engine_config['f_r']
-    beta = engine_config['beta']
-
+    D_pit = Decimal(str(engine_config['D_pit']))
+    D_ball = Decimal(str(engine_config['D_ball']))
+    f_r = Decimal(str(engine_config['f_r']))
+    beta = Decimal(str(engine_config['beta']))
+    n = Decimal(str(engine_config['n']))
+    
+    c_beta = safe_cos(beta)
+    # Check if cos(beta) is too close to zero
+    if c_beta == 0 or c_beta.is_nan():
+        raise ValueError("cos(beta) is zero or invalid, bearing calculation unstable.")
+    
+    if defect_type not in ['outer_race', 'inner_race', 'rolling_element']:
+        raise ValueError("Invalid defect type. Must be 'outer_race', 'inner_race', or 'rolling_element'.")
+    
+    factor = D_ball / (D_pit * c_beta)
     if defect_type == 'rolling_element':
-        return [(D_pit / D_ball) * f_r * (1 - (D_ball / (D_pit * math.cos(beta)))**2)]
-    elif defect_type in {'outer_race', 'inner_race'}:
-        n = engine_config['n']
-        assert isinstance(n, int) and n > 0, f"Number of rolling elements must be a positive integer. Got n={n}."
-        multiplier = -1 if defect_type == 'outer_race' else 1
-        return [(n / 2) * f_r * (1 + multiplier * D_ball / (D_pit * math.cos(beta)))]
-    else:
-        raise ValueError(f"Invalid defect type: '{defect_type}'. Must be one of 'rolling_element', 'outer_race', 'inner_race'.")
+        term = factor**Decimal('2')
+        freq = (D_pit/(Decimal('2')*D_ball))*f_r*(Decimal('1') - term)
+    elif defect_type == 'outer_race':
+        freq = (n/Decimal('2'))*f_r*(Decimal('1') - factor)
+    else: # inner_race
+        freq = (n/Decimal('2'))*f_r*(Decimal('1') + factor)
+    
+    return [float(freq)]
 
-
-def get_type5_freqs(engine_config: Dict[str, float], n_range: range = range(1, 4)) -> List[float]:
+def get_mech_freqs(engine_config: Dict[str, float], n_range=range(1,4)) -> List[float]:
     """
-    Calculate frequencies associated with other mechanical defects.
-
-    Args:
-        engine_config (dict): A dictionary containing engine parameters:
-            - 'f_r' (float): Rotational frequency.
-            - 'f1' (float): Supply frequency.
-        n_range (range): Range of harmonics to consider.
-
-    Returns:
-        list: Frequencies related to mechanical defects.
+    Compute mechanical defect frequencies.
+    
+    f = f1 ± n*f_r
+    
+    Parameters
+    ----------
+    engine_config : dict
+        'f1', 'f_r'
+    n_range : range
+    
+    Returns
+    -------
+    List[float]
     """
-    f_r = engine_config['f_r']
-    f1 = engine_config['f1']
+    f1 = Decimal(str(engine_config['f1']))
+    f_r = Decimal(str(engine_config['f_r']))
+    
     freqs = []
     for n in n_range:
-        assert n > 0, f"Harmonic index n must be positive. Got n={n}."
-        assert isinstance(n, int), f"Harmonic index n must be an integer. Got type={type(n)}."
-        freqs.append(f1 + n * f_r)
-    return freqs
-
+        n_d = Decimal(n)
+        freqs.append(f1 + n_d*f_r)
+        freqs.append(f1 - n_d*f_r)
+    return sorted(float(f) for f in freqs)
 
 ANOMALY_FREQS = {
-    'rotor bar defect': get_type1_freqs,
-    'air-gap eccentricity': get_type2_freqs,
-    'inter-turn short circuits': get_type3_freqs,
+    'rotor bar defect': get_rotor_bar_freqs,
+    'air-gap eccentricity': get_eccentricity_freqs,
+    'inter-turn short circuits': get_itsc_freqs,
     'bearing defect (rolling element)': lambda ec: get_bearing_freqs(ec, 'rolling_element'),
     'bearing defect (outer race)': lambda ec: get_bearing_freqs(ec, 'outer_race'),
     'bearing defect (inner race)': lambda ec: get_bearing_freqs(ec, 'inner_race'),
-    'other mechanical defects': get_type5_freqs
+    'other mechanical defects': get_mech_freqs
 }
+
+if __name__ == '__main__':
+    import yaml
+
+    with open('engine_configs/LIMAN.yml', 'r') as f:
+        engine_config = yaml.safe_load(f)
+
+    print("Rotor bar defect frequencies:", ANOMALY_FREQS['rotor bar defect'](engine_config))
+    print("Eccentricity frequencies:", ANOMALY_FREQS['air-gap eccentricity'](engine_config))
+    print("Inter-turn short circuit frequencies:", ANOMALY_FREQS['inter-turn short circuits'](engine_config))
+    print("Bearing rolling element defect frequency:", ANOMALY_FREQS['bearing defect (rolling element)'](engine_config))
+    print("Bearing outer race defect frequency:", ANOMALY_FREQS['bearing defect (outer race)'](engine_config))
+    print("Bearing inner race defect frequency:", ANOMALY_FREQS['bearing defect (inner race)'](engine_config))
+    print("Other mechanical defect frequencies:", ANOMALY_FREQS['other mechanical defects'](engine_config))
