@@ -127,29 +127,50 @@ def get_itsc_freqs(engine_config: Dict[str, float], k_values=range(1,4), m_range
 
 def get_bearing_freqs(engine_config: Dict[str, float], defect_type: str) -> List[float]:
     """
-    Compute bearing defect frequencies.
+    Compute bearing defect frequencies for a given bearing configuration and defect type.
     
-    - Outer Race (BPFO):
-      BPFO = (n/2)*f_r * (1 - (D_ball/(D_pit*cos(beta))))
-    - Inner Race (BPFI):
-      BPFI = (n/2)*f_r * (1 + (D_ball/(D_pit*cos(beta))))
-    - Rolling Element (BSF):
-      BSF = (D_pit/(2*D_ball))*f_r * [1 - (D_ball/(D_pit*cos(beta)))^2]
+    The following standard formulas are used (assuming a rolling element bearing):
+    
+    Let:
+    - n: Number of rolling elements
+    - D_pit: Pitch (mean) diameter of the bearing (m)
+    - D_ball: Diameter of the rolling element (m)
+    - f_r: Shaft (rotational) frequency in Hz
+    - beta: Contact angle of the rolling elements (radians)
+    
+    Defect Types and Formulas:
+    --------------------------
+    Outer Race (BPFO):
+        BPFO = (n/2)*f_r * [1 - (D_ball/D_pit)*cos(beta)]
+    
+    Inner Race (BPFI):
+        BPFI = (n/2)*f_r * [1 + (D_ball/D_pit)*cos(beta)]
+    
+    Rolling Element (BSF):
+        BSF = (D_pit/(2*D_ball))*f_r * [1 - ((D_ball/D_pit)*cos(beta))^2]
     
     Parameters
     ----------
     engine_config : dict
-        'n', 'D_pit', 'D_ball', 'f_r', 'beta'
+        Contains keys:
+            'n': Number of rolling elements (integer)
+            'D_pit': Pitch diameter of the bearing (float)
+            'D_ball': Rolling element diameter (float)
+            'f_r': Shaft frequency in Hz (float)
+            'beta': Contact angle in radians (float)
     defect_type : str
+        Type of bearing defect. Must be one of:
+        'outer_race', 'inner_race', or 'rolling_element'
     
     Returns
     -------
     List[float]
+        A single-element list containing the computed defect frequency.
     
     Raises
     ------
-    ValueError:
-        If cos(beta) ≈ 0 or invalid defect_type.
+    ValueError
+        If cos(beta) is zero or invalid, or if an invalid defect_type is provided.
     """
     D_pit = Decimal(str(engine_config['D_pit']))
     D_ball = Decimal(str(engine_config['D_ball']))
@@ -158,23 +179,26 @@ def get_bearing_freqs(engine_config: Dict[str, float], defect_type: str) -> List
     n = Decimal(str(engine_config['n']))
     
     c_beta = safe_cos(beta)
-    # Check if cos(beta) is too close to zero
     if c_beta == 0 or c_beta.is_nan():
         raise ValueError("cos(beta) is zero or invalid, bearing calculation unstable.")
     
-    if defect_type not in ['outer_race', 'inner_race', 'rolling_element']:
-        raise ValueError("Invalid defect type. Must be 'outer_race', 'inner_race', or 'rolling_element'.")
-    
-    factor = D_ball / (D_pit * c_beta)
+    factor = (D_ball / D_pit) * c_beta
+
     if defect_type == 'rolling_element':
+        # BSF formula
         term = factor**Decimal('2')
         freq = (D_pit/(Decimal('2')*D_ball))*f_r*(Decimal('1') - term)
     elif defect_type == 'outer_race':
+        # BPFO formula
         freq = (n/Decimal('2'))*f_r*(Decimal('1') - factor)
-    else: # inner_race
+    elif defect_type == 'inner_race':
+        # BPFI formula
         freq = (n/Decimal('2'))*f_r*(Decimal('1') + factor)
+    else:
+        raise ValueError("Invalid defect type. Must be 'outer_race', 'inner_race', or 'rolling_element'.")
     
     return [float(freq)]
+
 
 def get_mech_freqs(engine_config: Dict[str, float], n_range=range(1,4)) -> List[float]:
     """
@@ -225,3 +249,12 @@ if __name__ == '__main__':
     print("Bearing outer race defect frequency:", ANOMALY_FREQS['bearing defect (outer race)'](engine_config))
     print("Bearing inner race defect frequency:", ANOMALY_FREQS['bearing defect (inner race)'](engine_config))
     print("Other mechanical defect frequencies:", ANOMALY_FREQS['other mechanical defects'](engine_config))
+
+
+    # Rotor bar defect frequencies: [41.6, 44.4, 47.2, 52.8, 55.6, 58.4]
+    # Eccentricity frequencies: [-1139.983, -743.322, -346.661, 446.661, 843.322, 1239.983]
+    # Inter-turn short circuit frequencies: [-19.999, 3.334, 26.667, 30.001, 50.0, 53.334, 73.333, 76.667, 80.001, 96.666, 100.0, 103.334, 119.999, 123.333, 126.667, 146.666, 150.0, 169.999, 173.333, 196.666, 219.999]
+    # Bearing rolling element defect frequency: [-47.576496009847844]
+    # Bearing outer race defect frequency: [-308.93442795570587]
+    # Bearing inner race defect frequency: [495.59842795570586]
+    # Other mechanical defect frequencies: [-19.999, 3.334, 26.667, 73.333, 96.666, 119.999]
