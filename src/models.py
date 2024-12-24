@@ -91,18 +91,17 @@ class VAE(nn.Module):
             nn.LeakyReLU(),
             nn.Flatten(),
             nn.Linear(128 * input_dim, 128), 
-            nn.ReLU()
+            nn.LeakyReLU()
         )
         self.fc_mu = nn.Linear(128, latent_dim)
         self.fc_logvar = nn.Linear(128, latent_dim)
 
-
         # Decoder
         self.decoder_input = nn.Sequential(
             nn.Linear(latent_dim, 128),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(128, 128 * input_dim),
-            nn.ReLU()
+            nn.LeakyReLU()
         )
         self.decoder = nn.Sequential(
             nn.Unflatten(1, (128, input_dim)),
@@ -110,7 +109,6 @@ class VAE(nn.Module):
             nn.BatchNorm1d(64),
             nn.LeakyReLU(),
             nn.ConvTranspose1d(64, 1, kernel_size=3, padding=1),
-            nn.Sigmoid()
         )
 
     def reparameterize(self, mu, logvar):
