@@ -135,3 +135,31 @@ def train_resnet_model(model, train_loader, test_loader, device, num_epochs=10):
     precision, recall, f1_score, _ = precision_recall_fscore_support(
         all_labels, all_predictions, average='weighted')
     print(f'F1 Score: {f1_score:.4f}')
+
+
+def compute_mse(original_segment, denoised_segment):
+    """
+    Computes Mean Squared Error (MSE) between original and denoised segments.
+    """
+    return np.mean((original_segment - denoised_segment) ** 2)
+
+def compute_snr(original_segment, denoised_segment):
+    """
+    Computes the Signal-to-Noise Ratio (SNR) in dB for one segment.
+    SNR = 20 * log10(||original|| / ||original - denoised||).
+    """
+    numerator = np.linalg.norm(original_segment)
+    denominator = np.linalg.norm(original_segment - denoised_segment) + 1e-12
+    return 20 * np.log10(numerator / denominator)
+
+def compute_metrics(original_segments, denoised_segments):
+    """
+    Computes the average MSE and average SNR across all segments.
+    Returns (avg_mse, avg_snr).
+    """
+    mses = []
+    snrs = []
+    for orig_seg, den_seg in zip(original_segments, denoised_segments):
+        mses.append(compute_mse(orig_seg, den_seg))
+        snrs.append(compute_snr(orig_seg, den_seg))
+    return np.mean(mses), np.mean(snrs)
