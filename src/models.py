@@ -79,16 +79,20 @@ class VAE(nn.Module):
     """
     Variational Autoencoder (VAE) model 
     """
-    def __init__(self, input_dim, latent_dim):
+    def __init__(self, input_dim, latent_dim, dropout_p=0.2):
         super(VAE, self).__init__()
         # Encoder
         self.encoder = nn.Sequential(
             nn.Conv1d(1, 64, kernel_size=3, padding=1),
             nn.BatchNorm1d(64),
             nn.LeakyReLU(),
+            nn.Dropout(p=dropout_p),
+
             nn.Conv1d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm1d(128),
             nn.LeakyReLU(),
+            nn.Dropout(p=dropout_p),
+
             nn.Flatten(),
             nn.Linear(128 * input_dim, 128), 
             nn.LeakyReLU()
@@ -100,6 +104,8 @@ class VAE(nn.Module):
         self.decoder_input = nn.Sequential(
             nn.Linear(latent_dim, 128),
             nn.LeakyReLU(),
+            nn.Dropout(p=dropout_p),
+
             nn.Linear(128, 128 * input_dim),
             nn.LeakyReLU()
         )
@@ -108,6 +114,8 @@ class VAE(nn.Module):
             nn.ConvTranspose1d(128, 64, kernel_size=3, padding=1),
             nn.BatchNorm1d(64),
             nn.LeakyReLU(),
+            nn.Dropout(p=dropout_p),
+            
             nn.ConvTranspose1d(64, 1, kernel_size=3, padding=1),
         )
 
@@ -130,24 +138,39 @@ class VAE(nn.Module):
         x_decoded = self.decoder(x_decoded_input)
         return x_decoded, mu, logvar
 
-
-def vae_loss(x, x_decoded, mu, logvar):
+def total_variation_loss(signal, weight=1e-3):
     """
-    Calculates the VAE loss, combining reconstruction loss and KL divergence.
-
-    Parameters:
-    - x: Original input data.
-    - x_decoded: Reconstructed data from the decoder.
-    - mu: Mean from the encoder's latent space.
-    - logvar: Log variance from the encoder's latent space.
-
-    Returns:
-    - Loss value as a scalar tensor.
+    Encourages smoothness in the 1D output signal.
+    signal shape: [B, 1, L]
     """
-    # Reconstruction loss per batch
-    recon_loss = F.mse_loss(x_decoded, x, reduction='sum') / x.size(0)
+    diff = signal[:, :, 1:] - signal[:, :, :-1]
+    tv = torch.mean(torch.abs(diff))
+    return weight * tv
 
-    # KL divergence per batch
+
+def vae_loss(x, x_decoded, mu, logvar, beta=1.0, smoothness_weight=0.0, delta=1.0):
+    """
+    VAE loss using Huber (Smooth L1) for reconstruction + KL divergence + optional TV smoothing.
+    
+    Args:
+      x (Tensor): Original input of shape [B, 1, L].
+      x_decoded (Tensor): Model's reconstruction of shape [B, 1, L].
+      mu (Tensor): Mean vector from the encoder.
+      logvar (Tensor): Log variance from the encoder.
+      beta (float): Weight for the KL term (for beta-VAE).
+      smoothness_weight (float): If > 0, apply total variation penalty at that weight.
+      delta (float): Huber threshold (nn.SmoothL1Loss).
+    """
+    # 1) Huber (Smooth L1) reconstruction
+    huber_fn = nn.SmoothL1Loss(reduction='sum', beta=delta)
+    recon_loss = huber_fn(x_decoded, x) / x.size(0)
+
+    # 2) KL divergence
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
 
-    return recon_loss + kl_loss
+    # 3) Optional total variation for smoothing
+    tv_loss = 0.0
+    if smoothness_weight > 0:
+        tv_loss = total_variation_loss(x_decoded, weight=smoothness_weight)
+
+    return recon_loss + beta * kl_loss + tv_loss
