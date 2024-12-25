@@ -409,7 +409,7 @@ def plot_random_segments(peak_segments, num_segments=10, labels=None, max_points
         ax.grid(True, linestyle='--', linewidth=0.5)
 
     plt.tight_layout()
-    plt.show()
+    return fig, ax
 
 
 
