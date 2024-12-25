@@ -156,3 +156,66 @@ def plot_spectrum(df, freq_col="Frequency (Hz)", amp_col="Amplitude",
         print(f"Plot saved to {save_path}")
     else:
         plt.show()
+
+
+def generate_induction_motor_signal(
+    signal_length=1000,
+    sampling_rate=1000,
+    fundamental_freq=50,
+    noise_scale=0.2,
+    add_harmonics=True,
+    add_spikes=True,
+    add_noise=True,
+    add_modulation=True
+):
+    """
+    Generate a synthetic signal simulating induction motor current with selectable problems.
+    
+    Parameters:
+        signal_length (int): Number of samples in the signal.
+        sampling_rate (int): Sampling rate in Hz.
+        fundamental_freq (float): Fundamental frequency in Hz.
+        noise_scale (float): Standard deviation of Gaussian noise.
+        add_harmonics (bool): If True, includes harmonic components.
+        add_spikes (bool): If True, introduces transient spikes.
+        add_noise (bool): If True, adds Gaussian noise.
+        add_modulation (bool): If True, applies amplitude modulation.
+    
+    Returns:
+        tuple: (clean_signal, noisy_signal)
+            - clean_signal: The base signal without any disturbances.
+            - noisy_signal: The signal with selected disturbances added.
+    """
+    t = np.linspace(0, signal_length / sampling_rate, signal_length)
+    
+    # Fundamental signal
+    fundamental = np.sin(2 * np.pi * fundamental_freq * t)
+    
+    # Harmonics
+    harmonics = (
+        0.1 * np.sin(2 * np.pi * 2 * fundamental_freq * t) +
+        0.1 * np.sin(2 * np.pi * 3 * fundamental_freq * t) +
+        0.1 * np.sin(2 * np.pi * 4 * fundamental_freq * t)
+    ) if add_harmonics else 0
+    
+    # Amplitude modulation
+    modulation = (1 + 0.1 * np.sin(2 * np.pi * 0.5 * t)) if add_modulation else 1
+    
+    # Combine base signal
+    clean_signal = modulation * (fundamental + harmonics)
+    
+    # Initialize noisy signal
+    noisy_signal = clean_signal.copy()
+    
+    # Gaussian noise
+    if add_noise:
+        noise = np.random.normal(scale=noise_scale, size=signal_length)
+        noisy_signal += noise
+    
+    # Transient spikes 
+    if add_spikes:
+        for _ in range(5):  # Introduce 5 random spikes
+            spike_index = np.random.randint(0, signal_length)
+            noisy_signal[spike_index:spike_index + 10] += np.random.normal(scale=3.0, size=10)
+    
+    return clean_signal, noisy_signal
