@@ -5,7 +5,9 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 from matplotlib import pyplot as plt
 
-from scipy.signal import convolve, hann, resample
+from scipy.signal import convolve, resample, spectrogram
+from scipy.signal.windows import hann, blackman, hamming, kaiser, bartlett
+from PIL import Image
 import glob
 import random
 import math
@@ -48,7 +50,7 @@ def load_data_from_directory(directory):
     return np.array(data)
 
 
-def segment_signal(signal, segment_length, step=None, overlap=None, apply_window=True):
+def segment_signal(signal, segment_length, step=None, overlap=None, apply_window=None):
     """
     Segments the signal into windows, with options for overlap or fixed step size.
 
@@ -79,9 +81,18 @@ def segment_signal(signal, segment_length, step=None, overlap=None, apply_window
     else:
         raise ValueError("Either 'step' or 'overlap' must be specified.")
 
-    if apply_window:
-        hann_window = hann(segment_length)
-        segments = [seg * hann_window for seg in segments]
+    if apply_window is not None:
+        if apply_window == 'hann':
+            window = hann(segment_length)
+        elif apply_window == 'hamming':
+            window = hamming(segment_length)
+        elif apply_window == 'kaiser':
+            window = kaiser(segment_length, 0.5)
+        elif apply_window == 'bartlett':
+            window = bartlett(segment_length)
+        elif apply_window == 'blackman':
+            window = blackman(segment_length)
+        segments = [seg * window for seg in segments]
 
     return np.array(segments)
 
@@ -194,6 +205,7 @@ def process_time_series(input_data, output_dir, window_length=20000, shift=20, f
     print(f'Results saved to {output_dir}')
     return fft_segments, freqs
 
+
 def extract_segment(fft_data, target_frequency, segment_length):
     """
     Extracts a segment around a target frequency from FFT-transformed data.
@@ -216,6 +228,7 @@ def extract_segment(fft_data, target_frequency, segment_length):
         segment = np.pad(segment, (0, segment_length - len(segment)), 'constant')
 
     return segment
+
 
 def normalize_segment(segment, method='z-score'):
     """
@@ -243,6 +256,7 @@ def normalize_segment(segment, method='z-score'):
         raise ValueError("Normalization method must be either 'z-score' or 'min-max'")
 
     return normalized_segment, stats
+
 
 def extract_and_normalize_peak_segments(fft_data, segment_length=20, target_frequency=50, method='z-score'):
     """
@@ -298,6 +312,7 @@ def insert_synthetic_peaks(normal_data, synthetic_peaks, target_frequency, segme
         augmented_data.append(data_sample)
 
     return np.array(augmented_data)
+
 
 def create_datasets(normal_data_dir, anomalous_data_dir, batch_size, num_classes=2):
     """
@@ -453,6 +468,7 @@ def plot_random_files_from_directory(directory, num_files=8):
     plt.tight_layout()
     plt.show()
 
+
 def count_labels(loader):
     """
     Counts the number of occurrences of each label in a DataLoader.
@@ -472,6 +488,7 @@ def count_labels(loader):
             else:
                 label_counts[label] = 1
     return label_counts
+
 
 def add_smoothed_peak_to_files(input_directory, output_directory, peak_height_hybrid, peak_center_hybrid, peak_base_width, kernel_size):
     if not os.path.exists(output_directory):
@@ -495,3 +512,185 @@ def add_smoothed_peak_to_files(input_directory, output_directory, peak_height_hy
         data_with_smoothed_peak = data.iloc[:, 0] + smoothed_peak
 
         return data_with_smoothed_peak
+    
+
+def spectrogram_samples_using_scipy(noisy_signal, window_multiplier, num_samples):
+    """
+    Returns spectrogram samples from input signal
+
+    Parameters:
+    noisy_signal: input signal before preprocessing
+    window_multiplier: length of signal sample before preprocessing as multiplier before 10000
+    num_samples: number of returning samples
+
+    Returns:
+    spectrogram_samples: list of scipy spectrogram samples
+    """
+    sample_len = 10000 * window_multiplier
+    starts_indices = np.random.choice(len(noisy_signal)-sample_len, num_samples, replace=False)
+    spectrogram_samples = []
+    for idx in starts_indices:
+        signal_sample = noisy_signal[idx:idx+sample_len]
+        f, t, Sxx = spectrogram(signal_sample, fs=10000, nperseg=10000, window='blackman', noverlap=20)
+        spectrogram_samples.append((idx, f, t, np.log10(np.abs(Sxx))))
+    return spectrogram_samples
+
+
+def spectrogram_samples_manual(noisy_signal, window_multiplier, num_samples):
+    """
+    Returns spectrogram samples from input signal
+
+    Parameters:
+    noisy_signal: input signal before preprocessing
+    window_multiplier: length of signal sample before preprocessing as multiplier before 10000
+    num_samples: number of returning samples
+
+    Returns:
+    spectrogram_samples: list of manual spectrogram samples
+    """
+    sample_len = 10000 * window_multiplier
+    starts_indices = np.random.choice(len(noisy_signal)-sample_len, num_samples, replace=False)
+    spectrogram_samples = []
+    for idx in starts_indices:
+        signal_sample = noisy_signal[idx:idx+sample_len]
+        segments = segment_signal(signal_sample, segment_length=10000, step=20, apply_window='blackman')
+        fft_segments, freqs = perform_fft_on_segments(segments, f_sampling=10000, db=True, cutoff_freq=250)
+        spectrogram_samples.append((idx, freqs, np.array(range(len(fft_segments))), fft_segments.T))
+    return spectrogram_samples
+
+
+def plot_spectrogram_samples(signal_samples, axis_labels=None, ylim=250):
+    """
+    Plots spectrogram samples (max samples is 4)
+
+    Parameters:
+    signal_samples: samples of signal
+    axis_labels: optional tuple (x_label, y_label) for x and y axis labels
+    ylim: frequencies axis upper limit
+
+    Returns:
+    fig - matplotlib figure
+    ax - matplotlib axis
+    """
+    num_samples = min(len(signal_samples), 4) 
+    fig, axes = plt.subplots(num_samples // 2, 2, figsize=(15, 5 * (num_samples // 2)))
+    axes = axes.flatten()
+    x_label, y_label = axis_labels if axis_labels else ('Time [secs]', 'Frequency [dB]')
+    for i, ax in enumerate(axes):
+        start_index, f, t, log_Sxx = signal_samples[i]
+        ax.pcolormesh(t, f, log_Sxx, shading='gouraud')
+        ax.set_title(f'sample starting from {start_index}', fontsize=10, fontweight='bold')
+        ax.set_xlabel(x_label, fontsize=9)
+        ax.set_ylabel(y_label, fontsize=9)
+        ax.set_ylim([0, ylim])
+    plt.tight_layout()
+    return fig, ax
+
+
+def scipy_to_pillow(f, t, Sxx, ylim=250, img_size=64):
+    """
+    Converts spectrogram from scipy format to pillow image
+
+    Parameters:
+    f: array of sample frequencies (from scipy.signal.spectrogram output)
+    t: array of segment times (from scipy.signal.spectrogram output)
+    Sxx: scipy spectrogram (from scipy.signal.spectrogram output)
+    img_size: size of output image
+
+    Returns:
+    img = pillow image
+    """
+    fig = plt.figure(frameon=False)
+    fig.set_size_inches(15, 15)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.set_ylim([0, ylim])
+    ax.pcolormesh(t, f, np.log10(np.abs(Sxx)), shading='gouraud')
+    fig.savefig('spec.png', dpi=300)
+    img = Image.open('spec.png').resize((img_size, img_size))
+    os.remove('spec.png')
+    plt.close()
+    return img
+
+
+def numpy_to_pillow(fft_segments_T, img_size=64):
+    """
+    Converts spectrogram from numpy array to pillow image
+    
+    Parameters:
+    fft_segments_T: numpy array of spectrogram (must be transposed)
+    img_size: size of output image
+
+    Returns:
+    img - pillow image
+    """
+    transformed = (fft_segments_T * 255 / np.max(fft_segments_T)).astype('uint8')
+    img = Image.fromarray(transformed).transpose(Image.FLIP_TOP_BOTTOM).resize((img_size, img_size))
+    return img
+
+
+def spectrogram_samples_from_file(input_path, output_path, window_multiplier, num_samples, mode="manual"):
+    """
+    Spectrogram pipeline for signal
+
+    Parameters:
+    input_path: input file path
+    output_path: output file path
+    mode: spectrogram type ('manual' or 'scipy')
+
+    Returns:
+    spectrogram_samples: list of spectrogram samples
+    """
+    df = read_oscilloscope_data(
+        file_path=input_path,
+        output_path=output_path
+        )
+
+    noisy_signal = df['Data'].to_numpy()
+    noisy_signal_mean = np.mean(noisy_signal)
+    noisy_signal -= noisy_signal_mean
+    
+    if mode == 'scipy':
+        signal_samples = spectrogram_samples_using_scipy(noisy_signal, window_multiplier, num_samples)
+    else:
+        signal_samples = spectrogram_samples_manual(noisy_signal, window_multiplier, num_samples)
+    
+    return signal_samples
+
+
+def plot_manual_fft_as_full_spectrogram(fft_segments, freqs, axis_labels=None, ylim=250): 
+    """
+    Plots manual FFT segments as spectrogram
+
+    Parameters:
+    fft_segments: numpy array of spectrogram
+    freqs: frequency bins
+    axis_labels: optional tuple (x_label, y_label) for x and y axis labels
+    ylim: frequencies axis upper limit
+    """  
+    plt.figure(figsize=(15, 5))
+    x_label, y_label = axis_labels if axis_labels else ('Time [segments]', 'Frequency [dB]')
+    plt.pcolormesh(np.array(range(len(fft_segments))), freqs, fft_segments.T, shading='gouraud')
+    plt.ylabel(y_label)
+    plt.xlabel(x_label)
+    plt.ylim([0, ylim])
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_full_scipy_spectrogram(noisy_signal, ylim=250):
+    """
+    Plots scipy spectrogram from full signal
+
+    Parameters:
+    noisy_signal: input signal before preprocessing
+    ylim: frequencies axis upper limit
+    """
+    f, t, Sxx = spectrogram(noisy_signal, fs=10000, nperseg=10000, window='blackman', noverlap=20)
+    plt.figure(figsize=(15, 5))
+    plt.pcolormesh(t, f, np.log10(np.abs(Sxx)), shading='gouraud')
+    plt.ylabel('Frequency [dB]')
+    plt.xlabel('Time [sec]')
+    plt.ylim([0, ylim])
+    plt.show()
