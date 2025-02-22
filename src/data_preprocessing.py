@@ -679,18 +679,21 @@ def plot_manual_fft_as_full_spectrogram(fft_segments, freqs, axis_labels=None, y
     plt.show()
 
 
-def plot_full_scipy_spectrogram(noisy_signal, ylim=250):
+def plot_full_scipy_spectrogram(noisy_signal, axis_labels=None, ylim=250):
     """
     Plots scipy spectrogram from full signal
 
     Parameters:
     noisy_signal: input signal before preprocessing
+    axis_labels: optional tuple (x_label, y_label) for x and y axis labels
     ylim: frequencies axis upper limit
     """
     f, t, Sxx = spectrogram(noisy_signal, fs=10000, nperseg=10000, window='blackman', noverlap=20)
     plt.figure(figsize=(15, 5))
+    x_label, y_label = axis_labels if axis_labels else ('Time [sec]', 'Frequency [dB]')
     plt.pcolormesh(t, f, np.log10(np.abs(Sxx)), shading='gouraud')
-    plt.ylabel('Frequency [dB]')
-    plt.xlabel('Time [sec]')
+    plt.ylabel(y_label)
+    plt.xlabel(x_label)
     plt.ylim([0, ylim])
+    plt.tight_layout()
     plt.show()
