@@ -569,8 +569,8 @@ def plot_spectrogram_samples(signal_samples, axis_labels=None, ylim=250):
     ylim: frequencies axis upper limit
 
     Returns:
-    fig - matplotlib figure
-    ax - matplotlib axis
+    fig: matplotlib figure
+    ax: matplotlib axis
     """
     num_samples = min(len(signal_samples), 4) 
     fig, axes = plt.subplots(num_samples // 2, 2, figsize=(15, 5 * (num_samples // 2)))
@@ -598,7 +598,7 @@ def scipy_to_pillow(f, t, Sxx, ylim=250, img_size=64):
     img_size: size of output image
 
     Returns:
-    img = pillow image
+    img: pillow image
     """
     fig = plt.figure(frameon=False)
     fig.set_size_inches(15, 15)
@@ -623,7 +623,7 @@ def numpy_to_pillow(fft_segments_T, img_size=64):
     img_size: size of output image
 
     Returns:
-    img - pillow image
+    img: pillow image
     """
     transformed = (fft_segments_T * 255 / np.max(fft_segments_T)).astype('uint8')
     img = Image.fromarray(transformed).transpose(Image.FLIP_TOP_BOTTOM).resize((img_size, img_size))
