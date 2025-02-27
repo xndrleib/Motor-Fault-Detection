@@ -9,6 +9,9 @@ from scipy.signal import convolve, hann, resample
 import glob
 import random
 import math
+from src.electrical_signature_frequencies import ANOMALY_FREQS
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 
 
 def read_oscilloscope_data(file_path, output_path=None):
@@ -109,7 +112,8 @@ def time_to_freq_transform(data, f_sampling, db=True, cutoff_freq=None):
     freqs = np.fft.rfftfreq(n, d=1/f_sampling)  # Frequency bins
     
     if db:
-        yf = 20 * np.log10(np.abs(yf))  # Convert to dB scale
+        epsilon = 1e-12  # Small constant to avoid log10(0)
+        yf = 20 * np.log10(np.abs(yf) + epsilon)  # Convert to dB scale
     
     if cutoff_freq is not None:
         mask = freqs < cutoff_freq  # Apply cutoff filter
@@ -217,6 +221,38 @@ def extract_segment(fft_data, target_frequency, segment_length):
 
     return segment
 
+def generate_synthetic_peak(length, peak_amplitude, sigma=1.0, method='gaussian'):
+    """
+    Generates a synthetic peak profile of a given length.
+    
+    Parameters:
+    -----------
+    length : int
+        The number of points in the peak profile.
+    peak_amplitude : float
+        The maximum amplitude of the peak.
+    sigma : float, optional
+        Standard deviation for the Gaussian profile (default is 1.0).
+    method : str, optional
+        Method to generate the peak. Options:
+          - 'gaussian': Returns a Gaussian-shaped peak.
+          - 'constant': Returns a constant peak profile.
+    
+    Returns:
+    --------
+    np.ndarray
+        A 1D array representing the synthetic peak profile.
+    """
+    if method == 'gaussian':
+        x = np.arange(length)
+        center = length // 2
+        profile = peak_amplitude * np.exp(-((x - center) ** 2) / (2 * sigma**2))
+    elif method == 'constant':
+        profile = np.full(length, peak_amplitude)
+    else:
+        raise ValueError(f"Unsupported peak generation method: {method}")
+    return profile
+
 def normalize_segment(segment, method='z-score'):
     """
     Normalizes a segment using the specified method.
@@ -241,7 +277,6 @@ def normalize_segment(segment, method='z-score'):
         stats = (min_val, max_val)
     else:
         raise ValueError("Normalization method must be either 'z-score' or 'min-max'")
-
     return normalized_segment, stats
 
 def extract_and_normalize_peak_segments(fft_data, segment_length=20, target_frequency=50, method='z-score'):
@@ -271,33 +306,181 @@ def extract_and_normalize_peak_segments(fft_data, segment_length=20, target_freq
     return np.array(peak_segments), np.array(stats)
 
 
-def insert_synthetic_peaks(normal_data, synthetic_peaks, target_frequency, segment_length):
+def insert_synthetic_peaks(segment, fft_freqs, fault_type, engine_config, 
+                           peak_segment, peak_amplitude=5.0, amplitude_range=None, peak_generator=None, **kwargs):
     """
-    Inserts synthetic peaks into normal data samples at the target frequency location.
+    Inserts synthetic fault peaks into a given FFT segment.
     
     Parameters:
-    - normal_data: Array of normal (unmodified) data samples.
-    - synthetic_peaks: Array of synthetic peak segments to insert.
-    - target_frequency: The frequency location where peaks should be inserted.
-    - segment_length: The length of the peak segment to be inserted.
+    -----------
+    segment : np.ndarray
+        The FFT magnitude segment from a normal signal.
+    fft_freqs : np.ndarray
+        The frequency bins corresponding to the FFT segment.
+    fault_type : str
+        The fault type to simulate (should match a key in ANOMALY_FREQS).
+    engine_config : dict
+        Engine configuration parameters used to compute fault frequencies.
+    peak_segment : int, optional
+        Half-window size (in frequency bins) around each fault frequency to modify (default 6).
+    peak_amplitude : float, optional
+        The amplitude boost to apply to simulate the fault (default 5.0).
+    peak_generator : callable, optional
+        A function that generates a synthetic peak profile. It should accept at least the following arguments:
+          - length: the length of the profile,
+          - peak_amplitude: the peak amplitude,
+          plus any additional keyword arguments.
+        If None, a constant boost is applied.
+    **kwargs:
+        Additional keyword arguments passed to the peak_generator.
     
     Returns:
-    - augmented_data: Array of augmented data samples with synthetic peaks inserted.
+    --------
+    np.ndarray
+        The modified segment with synthetic peaks inserted.
     """
-    augmented_data = []
-    target_index = int(target_frequency * 2 + 2)
+    modified_segment = segment.copy()
+    # Retrieve target fault frequencies using the signature function
+    fault_freqs = ANOMALY_FREQS.get(fault_type, lambda ec: [])(engine_config)
 
-    for data_sample in normal_data:
-        data_sample = data_sample.copy()
-        for peak in synthetic_peaks:
-            start = max(0, target_index - segment_length // 2)
-            end = min(len(data_sample), start + segment_length)
-            if end - start < segment_length:
-                peak = peak[:end - start]
-            data_sample[start:end] = peak
-        augmented_data.append(data_sample)
+    if amplitude_range is not None:
+        current_amp = random.uniform(*amplitude_range)
+    else:
+        current_amp = peak_amplitude
+    
+    for freq in fault_freqs:
+        # Find the index in fft_freqs closest to the fault frequency
+        idx = np.argmin(np.abs(fft_freqs - freq))
+        start_idx = max(0, idx - peak_segment)
+        end_idx = min(len(modified_segment), idx + peak_segment + 1)
+        window_length = end_idx - start_idx
+        
+        # Generate a peak profile using the provided peak_generator or default to a constant boost
+        if peak_generator is not None:
+            profile = peak_generator(window_length, current_amp, **kwargs)
+        else:
+            profile = np.full(window_length, peak_amplitude)
+        
+        # Add the synthetic peak profile into the segment
+        modified_segment[start_idx:end_idx] += profile
+    return modified_segment
 
-    return np.array(augmented_data)
+
+def process_file(file_path, engine_config, label, 
+                 f_sampling=10000, cutoff_freq=250, segment_length=10000, peak_segment=6, step=20, 
+                 apply_window=False, db=True,
+                 synthetic_fault_fraction=0.0, 
+                 fault_types=None,
+                 amplitude_range=(1.0, 5.0),
+                 peak_generator=generate_synthetic_peak,
+                 peak_method='gaussian',
+                 peak_sigma=2.0):
+    """
+    Processes a single file by reading raw data, segmenting, performing FFT,
+    and optionally injecting synthetic faults (if label=='normal' and synthetic_fault_fraction>0).
+
+    Parameters:
+    -----------
+    file_path : str
+        Path to the raw oscilloscope data file.
+    engine_config : dict
+        Dictionary of engine parameters used for fault signature calculations.
+    label : str
+        Label for the file ('normal' or a specific fault type).
+    f_sampling : int, optional
+        Sampling frequency (default 10000 Hz).
+    cutoff_freq : float, optional
+        Maximum frequency (Hz) to keep from the FFT (default 250 Hz).
+    segment_length : int, optional
+        Length (in points) of each segment for FFT extraction (default 6).
+    step : int, optional
+        Step size for segmenting the signal (default 20).
+    apply_window : bool, optional
+        If True, a window function is applied to each segment before FFT (default False).
+    db : bool, optional
+        If True, convert FFT magnitudes to dB scale (default True).
+    synthetic_fault_fraction : float, optional
+        Fraction (0.0 to 1.0) of normal segments to modify with synthetic faults (default 0.0).
+    fault_types : list of str, optional
+        List of possible fault types to inject (required if synthetic_fault_fraction>0).
+    amplitude_range : tuple, optional
+        (min_amp, max_amp) range for random peak amplitudes (default (1.0, 5.0)).
+    peak_generator : callable, optional
+        Function that generates a peak profile (default generate_synthetic_peak).
+    peak_method : str, optional
+        Method used by peak_generator (default 'gaussian').
+    peak_sigma : float, optional
+        Sigma parameter if using a Gaussian peak generator (default 2.0).
+
+    Returns:
+    --------
+    tuple: (all_fft_segments, labels, freqs)
+        all_fft_segments : list of np.ndarray
+            FFT-transformed segments (with or without synthetic injection).
+        labels : list of str
+            Labels corresponding to each segment.
+        freqs : np.ndarray
+            Frequency bins from the FFT.
+    """
+    # 1. Read data from file
+    df = read_oscilloscope_data(file_path, output_path=None)
+
+    # 2. Segment the time-series data
+    segments = segment_signal(
+        df['Data'].values, 
+        segment_length=segment_length, 
+        step=step, 
+        apply_window=apply_window
+    )
+    
+    # 3. Perform FFT on each segment
+    fft_segments, freqs = perform_fft_on_segments(
+        segments, 
+        f_sampling, 
+        db=db, 
+        cutoff_freq=cutoff_freq
+    )
+    
+    all_fft_segments = []
+    all_labels = []
+    
+    # 4. If the file is labeled 'normal' and we want to inject synthetic faults
+    if label == 'normal' and synthetic_fault_fraction > 0 and fault_types is not None:
+        n_segments = len(fft_segments)
+        n_modify   = int(n_segments * synthetic_fault_fraction)
+        modify_indices = random.sample(range(n_segments), n_modify)
+        
+        for i, seg in enumerate(fft_segments):
+            if i in modify_indices:
+                # Pick a random fault type
+                chosen_fault = random.choice(fault_types)
+                
+                # Insert synthetic peaks
+                mod_seg = insert_synthetic_peaks(
+                    segment=seg,
+                    fft_freqs=freqs,
+                    fault_type=chosen_fault,
+                    engine_config=engine_config,
+                    peak_segment=peak_segment,
+                    peak_generator=peak_generator,
+                    amplitude_range=amplitude_range,
+                    sigma=peak_sigma,
+                    method=peak_method
+                )
+                all_fft_segments.append(mod_seg)
+                all_labels.append(chosen_fault)
+            else:
+                # Keep it normal
+                all_fft_segments.append(seg)
+                all_labels.append(label)
+    else:
+        # 5. No injection, just keep all segments with the given label
+        all_fft_segments = fft_segments
+        all_labels       = [label] * len(fft_segments)
+    
+    return all_fft_segments, all_labels, freqs
+
+
 
 def create_datasets(normal_data_dir, anomalous_data_dir, batch_size, num_classes=2):
     """
@@ -495,3 +678,162 @@ def add_smoothed_peak_to_files(input_directory, output_directory, peak_height_hy
         data_with_smoothed_peak = data.iloc[:, 0] + smoothed_peak
 
         return data_with_smoothed_peak
+    
+
+def create_dataset(file_label_map, engine_config, mode="binary",
+                   f_sampling=10000, cutoff_freq=250, segment_length=10000, peak_segment=6, step=20,
+                   apply_window=False, db=True, 
+                   fault_types_available=None, include_real_anomalies_in_training=False,
+                   amplitude_range=(1.0, 5.0), test_size=0.3, normalization_method='min-max', seed=42):
+    """
+    Creates training and test datasets using process_file.
+    
+    For files labeled "normal":
+      - Process the file without synthetic injection.
+      - Split the resulting segments into training and test sets to avoid data leakage.
+      - Inject synthetic faults (with randomized amplitude) into a fraction of the training segments.
+      
+    For fault files, synthetic injection is not applied.
+    
+    Synthetic fault fraction:
+      - Binary mode: 0.5 (i.e. 50% of training normal segments are injected)
+      - Multiclass mode: k/(k+1), where k is the number of fault types available.
+      
+    Returns a dictionary with training and test arrays, FFT frequency bins, and a LabelEncoder (for multiclass).
+    """
+    if mode == "binary":
+        synthetic_fraction = 0.5
+    elif mode == "multiclass":
+        if fault_types_available is None or len(fault_types_available) == 0:
+            raise ValueError("For multiclass mode, fault_types_available must be provided and non-empty.")
+        k = len(fault_types_available)
+        synthetic_fraction = k / (k + 1)
+    else:
+        raise ValueError("Mode must be either 'binary' or 'multiclass'")
+    
+    train_segments = []
+    train_labels = []
+    test_segments = []
+    test_labels = []
+    common_freqs = None
+    
+    for file_path, label in file_label_map.items():
+        # For each file, process without injection (synthetic_fault_fraction=0)
+        segs, labels_out, freqs = process_file(
+            file_path, engine_config, label,
+            f_sampling=f_sampling, cutoff_freq=cutoff_freq,
+            segment_length=segment_length, step=step,
+            apply_window=apply_window, db=db,
+            synthetic_fault_fraction=0.0,  # No injection here
+            fault_types=None,
+            amplitude_range=amplitude_range
+        )
+        if common_freqs is None:
+            common_freqs = freqs
+        
+        if label == "normal":
+            # Split normal segments into training and test sets
+            segs_train, segs_test, _, labels_test = train_test_split(
+                segs, labels_out, test_size=test_size, random_state=seed
+            )
+            # Inject synthetic faults ONLY into the training segments
+            n_train = len(segs_train)
+            n_modify = int(n_train * synthetic_fraction)
+            modify_indices = random.sample(range(n_train), n_modify)
+            
+            new_train_segs = []
+            new_train_labels = []
+            for i, seg in enumerate(segs_train):
+                if i in modify_indices:
+                    # Randomly choose a fault type from available list
+                    chosen_fault = random.choice(fault_types_available)
+                    # Randomly choose an amplitude from amplitude_range
+                    chosen_amp = random.uniform(*amplitude_range)
+                    # Inject synthetic peaks using insert_synthetic_peaks()
+                    mod_seg = insert_synthetic_peaks(
+                        segment=seg,
+                        fft_freqs=freqs,
+                        fault_type=chosen_fault,
+                        engine_config=engine_config,
+                        peak_segment=peak_segment,
+                        peak_generator=generate_synthetic_peak,
+                        sigma=2.0,
+                        method='gaussian'
+                    )
+                    new_train_segs.append(mod_seg)
+                    new_train_labels.append(chosen_fault)
+                else:
+                    new_train_segs.append(seg)
+                    new_train_labels.append(label)
+            
+            # Add processed normal data to the dataset
+            train_segments.extend(new_train_segs)
+            train_labels.extend(new_train_labels)
+            test_segments.extend(segs_test)
+            test_labels.extend(labels_test)
+        
+        else:
+            # For fault files, do not inject; add to test set (or to training if desired)
+            if include_real_anomalies_in_training:
+                train_segments.extend(segs)
+                train_labels.extend(labels_out)
+            test_segments.extend(segs)
+            test_labels.extend(labels_out)
+    
+    # Convert lists to arrays
+    X_train_raw = np.array(train_segments, dtype=np.float32)
+    X_test_raw  = np.array(test_segments, dtype=np.float32)
+    
+    if normalization_method:
+        # Normalize each segment
+        X_train = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_train_raw])
+        X_test  = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_test_raw])
+    else:
+        X_train = X_train_raw
+        X_test = X_test_raw
+    
+    y_train_raw = np.array(train_labels)
+    y_test_raw  = np.array(test_labels)
+    
+    # Create binary labels: "normal" as 0, others as 1
+    y_train_bin = np.array([0 if lbl=="normal" else 1 for lbl in y_train_raw])
+    y_test_bin  = np.array([0 if lbl=="normal" else 1 for lbl in y_test_raw])
+    
+    # Create multiclass labels using LabelEncoder
+    le = LabelEncoder()
+    y_train_multi = le.fit_transform(y_train_raw)
+    y_test_multi  = le.transform(y_test_raw)
+    
+    if mode == "binary":
+        final_y_train = y_train_bin
+        final_y_test  = y_test_bin
+    else:
+        final_y_train = y_train_multi
+        final_y_test  = y_test_multi
+    
+    return {
+        "X_train": X_train,
+        "y_train": final_y_train,
+        "X_test": X_test,
+        "y_test": final_y_test,
+        "freqs": common_freqs,
+        "label_encoder": le if mode=="multiclass" else None
+    }
+
+
+def create_dataloaders(dataset, batch_size=16):
+    """
+    Creates PyTorch DataLoaders from the dataset dictionary.
+    """
+    X_train = torch.tensor(dataset["X_train"], dtype=torch.float32).unsqueeze(1)
+    y_train = torch.tensor(dataset["y_train"], dtype=torch.long)
+    X_test = torch.tensor(dataset["X_test"], dtype=torch.float32).unsqueeze(1)
+    y_test = torch.tensor(dataset["y_test"], dtype=torch.long)
+    
+    train_ds = TensorDataset(X_train, y_train)
+    test_ds = TensorDataset(X_test, y_test)
+    
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+    
+    return train_loader, test_loader

@@ -969,3 +969,4 @@ data/processed/*
 
 res/*
 !res/.gitkeep
+cfg.yaml

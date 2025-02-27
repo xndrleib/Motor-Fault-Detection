@@ -22,3 +22,5 @@ dependencies:
   - jupyter
   - ipywidgets
   - nb_conda_kernels
+  - pip:
+    - comet_ml

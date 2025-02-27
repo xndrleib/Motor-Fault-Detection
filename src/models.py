@@ -36,11 +36,11 @@ class ResNet(nn.Module):
     """
     Definition of the ResNet model for time-series classification.
     """
-    def __init__(self, block, layers, num_classes=2):
+    def __init__(self, block, layers, num_classes=2, dropout_rate=0.5):
         super(ResNet, self).__init__()
         self.in_channels = 64
-        self.conv = nn.Conv1d(
-            1, 64, kernel_size=7, stride=2, padding=3)
+        self.dropout_rate = dropout_rate
+        self.conv = nn.Conv1d(1, 64, kernel_size=7, stride=2, padding=3)
         self.bn = nn.BatchNorm1d(64)
         self.layer1 = self.make_layer(block, 64, layers[0])
         self.layer2 = self.make_layer(block, 128, layers[1], stride=2)
@@ -49,16 +49,17 @@ class ResNet(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(512, num_classes)
 
+        self._initialize_weights()
+
     def make_layer(self, block, out_channels, blocks, stride=1):
         downsample = None
         if (stride != 1) or (self.in_channels != out_channels):
             downsample = nn.Sequential(
-                nn.Conv1d(
-                    self.in_channels, out_channels, kernel_size=1, stride=stride),
-                nn.BatchNorm1d(out_channels))
-        layers = []
-        layers.append(
-            block(self.in_channels, out_channels, stride, downsample))
+                nn.Conv1d(self.in_channels, out_channels, kernel_size=1, stride=stride),
+                nn.BatchNorm1d(out_channels)
+                )
+            
+        layers = [block(self.in_channels, out_channels, stride, downsample)]
         self.in_channels = out_channels
         for _ in range(1, blocks):
             layers.append(block(out_channels, out_channels))
@@ -72,8 +73,22 @@ class ResNet(nn.Module):
         out = self.layer4(out)
         out = self.avg_pool(out)
         out = out.squeeze(-1)
+        out = F.dropout(out, p=self.dropout_rate, training=self.training)
         out = self.fc(out)
         return out
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
 
 class VAE(nn.Module):
     """
