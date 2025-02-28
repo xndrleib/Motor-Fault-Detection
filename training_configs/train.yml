@@ -1,0 +1,43 @@
+# Training parameters for the Unified Training Pipeline
+processing_parameters:
+  # Sampling frequency (Hz)
+  f_sampling: 10000
+  # Shift used during segmentation (samples)
+  shift: 20
+  # Number of samples per segment
+  segment_length: 10000
+  # Cutoff frequency for FFT (Hz)
+  cutoff_freq: 250
+  # Type of synthetic peak to generate ("gaussian", etc.)
+  peak_type: "gaussian"
+  # Half-window size around each fault frequency for peak injection
+  peak_segment: 2
+  # Range for random peak amplitudes during synthetic injection
+  amplitude_range: [2.0, 20.0]
+  
+training_parameters:
+  # Number of epochs for binary classification training
+  num_epochs_binary: 10
+  # Number of epochs for multiclass classification training
+  num_epochs_multi: 10
+
+data_parameters:
+  # Batch size for training DataLoader
+  batch_size: 16
+  # Mapping from raw file paths to labels
+  file_label_map:
+    "../data/raw/0702 без перекосов фаза A.txt": "normal"
+    "../data/raw/0702  межвитковые фазы A ток фазы А.txt": "inter-turn short circuits"
+    "../data/raw/20_01_1460_об_мин_с_дисбалансом_ротора.txt": "rotor bar defect"
+  # List of fault types available for synthetic injection
+  fault_types_available:
+    - "rotor bar defect"
+    - "inter-turn short circuits"
+
+dataset_parameters:
+  # Fraction of segments set aside as the test set
+  test_size: 0.3
+  # Fraction of the train+validation split that becomes the validation set
+  val_size: 0.2
+  # Normalization method applied to FFT segments ("min-max" or "z-score")
+  normalization_method: "min-max"
