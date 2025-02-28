@@ -2,32 +2,57 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Squeeze-and-Excitation block
+class SEBlock(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super(SEBlock, self).__init__()
+        self.fc1 = nn.Linear(channels, channels // reduction)
+        self.fc2 = nn.Linear(channels // reduction, channels)
+    
+    def forward(self, x):
+        # Global average pooling over the temporal dimension: [B, C, T] -> [B, C]
+        s = x.mean(dim=-1)
+        s = F.relu(self.fc1(s))
+        s = torch.sigmoid(self.fc2(s))
+        s = s.unsqueeze(-1)  # reshape to [B, C, 1] for channel-wise scaling
+        return x * s
+
 class ResidualBlock(nn.Module):
     """
     Definition of the Residual Block used in the ResNet model.
+    - use_se: If True, integrates a Squeeze-and-Excitation (SE) block.
     """
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, use_se=False):
         super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv1d(
-            in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
-        self.bn1 = nn.BatchNorm1d(out_channels)
-        self.conv2 = nn.Conv1d(
-            out_channels, out_channels, kernel_size=3, padding=1)
+        # Pre-activation ordering: BN -> ReLU -> Conv
+        self.bn1 = nn.BatchNorm1d(in_channels)
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
         self.bn2 = nn.BatchNorm1d(out_channels)
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=3, padding=1)
         self.downsample = downsample
+        self.use_se = use_se
+
+        if use_se:
+            self.se = SEBlock(out_channels)
 
     def forward(self, x):
         residual = x
-
-        out = self.conv1(x)
-        out = F.relu(self.bn1(out))
-
+        
+        # Pre-activation: first BN and ReLU on input
+        out = F.relu(self.bn1(x))
+        # If downsampling is required, apply on the pre-activated input
+        if self.downsample is not None:
+            residual = self.downsample(out)
+        out = self.conv1(out)
+        out = F.relu(self.bn2(out))
         out = self.conv2(out)
-        out = self.bn2(out)
+
+        if self.use_se:
+            out = self.se(out)
 
         if self.downsample:
             residual = self.downsample(x)
-
+        
         out += residual
         out = F.relu(out)
         return out
@@ -36,22 +61,25 @@ class ResNet(nn.Module):
     """
     Definition of the ResNet model for time-series classification.
     """
-    def __init__(self, block, layers, num_classes=2, dropout_rate=0.5):
+    def __init__(self, block, layers, num_classes=2, dropout_rate=0.5, block_kwargs=None):
         super(ResNet, self).__init__()
+        if block_kwargs is None:
+            block_kwargs = {}
+
         self.in_channels = 64
         self.dropout_rate = dropout_rate
         self.conv = nn.Conv1d(1, 64, kernel_size=7, stride=2, padding=3)
         self.bn = nn.BatchNorm1d(64)
-        self.layer1 = self.make_layer(block, 64, layers[0])
-        self.layer2 = self.make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self.make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self.make_layer(block, 512, layers[3], stride=2)
+        self.layer1 = self.make_layer(block, 64, layers[0], stride=1, **block_kwargs)
+        self.layer2 = self.make_layer(block, 128, layers[1], stride=2, **block_kwargs)
+        self.layer3 = self.make_layer(block, 256, layers[2], stride=2, **block_kwargs)
+        self.layer4 = self.make_layer(block, 512, layers[3], stride=2, **block_kwargs)
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(512, num_classes)
 
         self._initialize_weights()
 
-    def make_layer(self, block, out_channels, blocks, stride=1):
+    def make_layer(self, block, out_channels, blocks, stride=1, **block_kwargs):
         downsample = None
         if (stride != 1) or (self.in_channels != out_channels):
             downsample = nn.Sequential(
@@ -59,10 +87,10 @@ class ResNet(nn.Module):
                 nn.BatchNorm1d(out_channels)
                 )
             
-        layers = [block(self.in_channels, out_channels, stride, downsample)]
+        layers = [block(self.in_channels, out_channels, stride, downsample, **block_kwargs)]
         self.in_channels = out_channels
         for _ in range(1, blocks):
-            layers.append(block(out_channels, out_channels))
+            layers.append(block(out_channels, out_channels, **block_kwargs))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -152,40 +180,3 @@ class VAE(nn.Module):
         x_decoded_input = self.decoder_input(z)
         x_decoded = self.decoder(x_decoded_input)
         return x_decoded, mu, logvar
-
-def total_variation_loss(signal, weight=1e-3):
-    """
-    Encourages smoothness in the 1D output signal.
-    signal shape: [B, 1, L]
-    """
-    diff = signal[:, :, 1:] - signal[:, :, :-1]
-    tv = torch.mean(torch.abs(diff))
-    return weight * tv
-
-
-def vae_loss(x, x_decoded, mu, logvar, beta=1.0, smoothness_weight=0.0, delta=1.0):
-    """
-    VAE loss using Huber (Smooth L1) for reconstruction + KL divergence + optional TV smoothing.
-    
-    Args:
-      x (Tensor): Original input of shape [B, 1, L].
-      x_decoded (Tensor): Model's reconstruction of shape [B, 1, L].
-      mu (Tensor): Mean vector from the encoder.
-      logvar (Tensor): Log variance from the encoder.
-      beta (float): Weight for the KL term (for beta-VAE).
-      smoothness_weight (float): If > 0, apply total variation penalty at that weight.
-      delta (float): Huber threshold (nn.SmoothL1Loss).
-    """
-    # 1) Huber (Smooth L1) reconstruction
-    huber_fn = nn.SmoothL1Loss(reduction='sum', beta=delta)
-    recon_loss = huber_fn(x_decoded, x) / x.size(0)
-
-    # 2) KL divergence
-    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
-
-    # 3) Optional total variation for smoothing
-    tv_loss = 0.0
-    if smoothness_weight > 0:
-        tv_loss = total_variation_loss(x_decoded, weight=smoothness_weight)
-
-    return recon_loss + beta * kl_loss + tv_loss

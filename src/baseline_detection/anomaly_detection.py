@@ -118,7 +118,7 @@ def detect_electro(
 
 if __name__ == '__main__':
     # python src/baseline_detection/anomaly_detection.py "data/raw/холостой ход 11 01.txt" LIMAN
-    from src.data_preprocessing import read_oscilloscope_data, time_to_freq_transform
+    from src.data_pipeline import read_oscilloscope_data, time_to_freq_transform
     
     import argparse
     import json

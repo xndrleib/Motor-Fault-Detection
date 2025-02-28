@@ -1,9 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
-import numpy as np
-from src.models import vae_loss
 from tqdm.auto import tqdm
 
 
@@ -46,78 +42,6 @@ def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
 
     progress_bar.close()
     print(f'Final Average Loss: {average_loss:.4f}')
-
-
-def generate_synthetic_peaks(vae_model, num_samples, latent_dim, segment_mins, segment_maxs):
-    """
-    Generate synthetic peak segments using the trained VAE.
-    """
-    vae_model.eval()
-    device = next(vae_model.parameters()).device
-
-    with torch.no_grad():
-        z = torch.randn(num_samples, latent_dim).to(device)
-        x_decoded_input = vae_model.decoder_input(z)
-        generated = vae_model.decoder(x_decoded_input)
-        generated = generated.cpu().numpy()
-        generated = generated.squeeze(1)  # Remove channel dimension
-
-    denormalized_peaks = []
-    for i, segment in enumerate(generated):
-        min_val = segment_mins[i % len(segment_mins)]
-        max_val = segment_maxs[i % len(segment_maxs)]
-        denormalized_segment = segment * (max_val - min_val + 1e-8) + min_val
-        denormalized_peaks.append(denormalized_segment)
-
-    return np.array(denormalized_peaks)
-
-
-def inference_resnet_model(model, test_loader, device):
-    """
-    Runs inference on the test loader and returns true and predicted labels.
-    
-    Parameters:
-      - model: Trained ResNet model.
-      - test_loader: DataLoader for the test set.
-      - device: Device to run inference on.
-      
-    Returns:
-      - all_labels: list of true labels.
-      - all_predictions: list of predicted labels.
-    """
-    model.eval()
-    all_labels = []
-    all_predictions = []
-    with torch.no_grad():
-        for inputs, labels in tqdm(test_loader, desc='Inference', unit='batch'):
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, preds = torch.max(outputs, 1)
-            all_labels.extend(labels.cpu().numpy())
-            all_predictions.extend(preds.cpu().numpy())
-    return all_labels, all_predictions
-
-
-def calculate_metrics(true_labels, predictions):
-    """
-    Calculates and prints confusion matrix and classification metrics.
-    
-    Parameters:
-      - true_labels: list or array of ground truth labels.
-      - predictions: list or array of predicted labels.
-      
-    Returns:
-      - cm: Confusion matrix (as a NumPy array).
-      - accuracy: Overall accuracy in percent.
-      - precision: Weighted precision.
-      - recall: Weighted recall.
-      - f1_score: Weighted F1 score.
-    """
-    cm = confusion_matrix(true_labels, predictions)
-    accuracy = 100.0 * np.sum(np.array(true_labels) == np.array(predictions)) / len(true_labels)
-    precision, recall, f1_score, _ = precision_recall_fscore_support(true_labels, predictions, average='weighted')
-    return cm, accuracy, precision, recall, f1_score
-
 
 def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=0.001):
     """
@@ -206,29 +130,40 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
 
     return model
 
-def compute_mse(original_segment, denoised_segment):
-    """
-    Computes Mean Squared Error (MSE) between original and denoised segments.
-    """
-    return np.mean((original_segment - denoised_segment) ** 2)
 
-def compute_snr(original_segment, denoised_segment):
-    """
-    Computes the Signal-to-Noise Ratio (SNR) in dB for one segment.
-    SNR = 20 * log10(||original|| / ||original - denoised||).
-    """
-    numerator = np.linalg.norm(original_segment)
-    denominator = np.linalg.norm(original_segment - denoised_segment) + 1e-12
-    return 20 * np.log10(numerator / denominator)
 
-def compute_metrics(original_segments, denoised_segments):
+def vae_loss(x, x_decoded, mu, logvar, beta=1.0, smoothness_weight=0.0, delta=1.0):
     """
-    Computes the average MSE and average SNR across all segments.
-    Returns (avg_mse, avg_snr).
+    VAE loss using Huber (Smooth L1) for reconstruction + KL divergence + optional TV smoothing.
+    
+    Args:
+      x (Tensor): Original input of shape [B, 1, L].
+      x_decoded (Tensor): Model's reconstruction of shape [B, 1, L].
+      mu (Tensor): Mean vector from the encoder.
+      logvar (Tensor): Log variance from the encoder.
+      beta (float): Weight for the KL term (for beta-VAE).
+      smoothness_weight (float): If > 0, apply total variation penalty at that weight.
+      delta (float): Huber threshold (nn.SmoothL1Loss).
     """
-    mses = []
-    snrs = []
-    for orig_seg, den_seg in zip(original_segments, denoised_segments):
-        mses.append(compute_mse(orig_seg, den_seg))
-        snrs.append(compute_snr(orig_seg, den_seg))
-    return np.mean(mses), np.mean(snrs)
+    # 1) Huber (Smooth L1) reconstruction
+    huber_fn = nn.SmoothL1Loss(reduction='sum', beta=delta)
+    recon_loss = huber_fn(x_decoded, x) / x.size(0)
+
+    # 2) KL divergence
+    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
+
+    # 3) Optional total variation for smoothing
+    tv_loss = 0.0
+    if smoothness_weight > 0:
+        tv_loss = total_variation_loss(x_decoded, weight=smoothness_weight)
+
+    return recon_loss + beta * kl_loss + tv_loss
+
+def total_variation_loss(signal, weight=1e-3):
+    """
+    Encourages smoothness in the 1D output signal.
+    signal shape: [B, 1, L]
+    """
+    diff = signal[:, :, 1:] - signal[:, :, :-1]
+    tv = torch.mean(torch.abs(diff))
+    return weight * tv

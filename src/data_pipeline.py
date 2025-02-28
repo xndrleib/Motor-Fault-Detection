@@ -875,3 +875,26 @@ def create_dataloaders(dataset, batch_size=16):
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
     
     return train_loader, val_loader, test_loader
+
+def generate_synthetic_peaks(vae_model, num_samples, latent_dim, segment_mins, segment_maxs):
+    """
+    Generate synthetic peak segments using the trained VAE.
+    """
+    vae_model.eval()
+    device = next(vae_model.parameters()).device
+
+    with torch.no_grad():
+        z = torch.randn(num_samples, latent_dim).to(device)
+        x_decoded_input = vae_model.decoder_input(z)
+        generated = vae_model.decoder(x_decoded_input)
+        generated = generated.cpu().numpy()
+        generated = generated.squeeze(1)  # Remove channel dimension
+
+    denormalized_peaks = []
+    for i, segment in enumerate(generated):
+        min_val = segment_mins[i % len(segment_mins)]
+        max_val = segment_maxs[i % len(segment_maxs)]
+        denormalized_segment = segment * (max_val - min_val + 1e-8) + min_val
+        denormalized_peaks.append(denormalized_segment)
+
+    return np.array(denormalized_peaks)
