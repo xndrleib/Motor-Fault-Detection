@@ -135,8 +135,16 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
         Number of epochs to train.
     """
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=initial_lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=initial_lr, weight_decay=1e-4)
+
+    total_steps = len(train_loader) * num_epochs
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=initial_lr,
+        total_steps=total_steps,
+        pct_start=0.3,
+        anneal_strategy='cos'
+    )
 
     best_val_acc = 0.0
     best_model_state = None
@@ -158,6 +166,7 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
                 # Backward pass and optimize
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
 
                 running_loss += loss.item() * inputs.size(0)
                 pbar.update(1)
@@ -184,9 +193,6 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
             avg_val_loss = val_loss / len(val_loader.dataset)
             val_acc = correct / total
             print(f'Validation Loss: {avg_val_loss:.4f}, Accuracy: {val_acc*100:.2f}%')
-
-            # Step the scheduler based on validation loss
-            scheduler.step(avg_val_loss)
 
             # Save best model
             if val_acc > best_val_acc:
