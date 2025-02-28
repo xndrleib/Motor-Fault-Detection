@@ -3,15 +3,45 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from matplotlib import pyplot as plt
-
-from scipy.signal import convolve, hann, resample
+from scipy.signal import convolve, hann
 import glob
 import random
-import math
 from src.electrical_signature_frequencies import ANOMALY_FREQS
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+
+def add_noise_to_segment(fft_segment, noise_factor=0.05):
+    """
+    Adds white Gaussian noise to an FFT segment.
+    
+    Parameters:
+      fft_segment: np.ndarray
+          The FFT-transformed segment (in dB scale).
+      noise_factor: float
+          Fraction of the segment's standard deviation used as noise std.
+    
+    Returns:
+      np.ndarray: The noisy FFT segment.
+    """
+    noise_std = noise_factor * np.std(fft_segment)
+    noise = np.random.normal(0, noise_std, fft_segment.shape)
+    return fft_segment + noise
+
+
+def add_noise_to_segments(fft_segments, noise_factor=0.05):
+    """
+    Applies white noise to each FFT segment in a 2D array.
+    
+    Parameters:
+      fft_segments: np.ndarray
+          A 2D array where each row is an FFT segment.
+      noise_factor: float
+          Fraction of each segment's standard deviation used as noise std.
+    
+    Returns:
+      np.ndarray: The array of noisy FFT segments.
+    """
+    return np.array([add_noise_to_segment(seg, noise_factor) for seg in fft_segments])
 
 
 def read_oscilloscope_data(file_path, output_path=None):
@@ -467,6 +497,7 @@ def process_file(file_path, engine_config, label,
                     sigma=peak_sigma,
                     method=peak_method
                 )
+
                 all_fft_segments.append(mod_seg)
                 all_labels.append(chosen_fault)
             else:
@@ -480,161 +511,6 @@ def process_file(file_path, engine_config, label,
     
     return all_fft_segments, all_labels, freqs
 
-
-
-def create_datasets(normal_data_dir, anomalous_data_dir, batch_size, num_classes=2):
-    """
-    Loads data from directories, assigns labels, shuffles, and creates PyTorch data loaders.
-    
-    Parameters:
-    - normal_data_dir: Directory containing CSV files of normal data samples.
-    - anomalous_data_dir: Directory containing CSV files of anomalous data samples.
-    - batch_size: Number of samples per batch for the data loader.
-    - num_classes: Number of classes for classification (default is 2 for binary).
-    
-    Returns:
-    - train_loader: DataLoader for training.
-    - test_loader: DataLoader for testing.
-    """
-    # Load data from each directory
-    normal_data = load_data_from_directory(normal_data_dir)
-    anomalous_data = load_data_from_directory(anomalous_data_dir)
-
-    # Assign labels
-    normal_labels = np.zeros(len(normal_data), dtype=int)
-    anomalous_labels = np.ones(len(anomalous_data), dtype=int)
-
-    # Combine and shuffle data and labels
-    data = np.concatenate((normal_data, anomalous_data), axis=0)
-    labels = np.concatenate((normal_labels, anomalous_labels), axis=0)
-    indices = np.arange(len(data))
-    np.random.shuffle(indices)
-    data = data[indices]
-    labels = labels[indices]
-
-    # Reshape for PyTorch (samples, channels, length)
-    data = data.reshape(data.shape[0], 1, -1)
-
-    # Convert to tensors
-    data_tensor = torch.tensor(data, dtype=torch.float32)
-    labels_tensor = torch.tensor(labels, dtype=torch.long)
-
-    # Create dataset and split into training and testing
-    dataset = TensorDataset(data_tensor, labels_tensor)
-    train_size = int(0.8 * len(dataset))
-    test_size = len(dataset) - train_size
-    train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
-
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-    return train_loader, test_loader
-
-
-def plot_random_segments(peak_segments, num_segments=10, labels=None, max_points=1000, axis_labels=None, x_values=None):
-    """
-    Plots random segments from the provided segments.
-
-    Parameters:
-    - peak_segments: Array of segments to plot.
-    - num_segments: Number of random segments to plot.
-    - labels: Optional list of custom labels for the segments.
-    - max_points: Maximum number of points to plot per segment (downsamples if necessary).
-    - axis_labels: Optional tuple (x_label, y_label) for x and y axis labels.
-    - x_values: Optional array of x-values corresponding to the peak segments.
-    """
-    if len(peak_segments) < num_segments:
-        raise ValueError("Not enough segments to plot")
-
-    random_indices = np.random.choice(len(peak_segments), num_segments, replace=False)
-    selected_segments = peak_segments[random_indices]
-
-    if labels is not None:
-        if len(labels) != len(peak_segments):
-            raise ValueError("Length of labels must match the length of peak_segments")
-        selected_labels = [labels[i] for i in random_indices]
-    else:
-        selected_labels = [f"Segment {i}" for i in random_indices]
-
-    # Setup subplot grid
-    fig, axes = plt.subplots(num_segments // 2, 2, figsize=(15, 5 * (num_segments // 2)))
-    axes = axes.flatten()
-
-    x_label, y_label = axis_labels if axis_labels else ('Frequency (Hz)', 'Power (dB)')
-
-    for i, ax in enumerate(axes):
-        segment = selected_segments[i]
-
-        # Downsample if necessary and max_points is not None
-        if max_points is not None and len(segment) > max_points:
-            segment = resample(segment, max_points)
-            if x_values is not None:
-                if len(x_values.shape) == 1:
-                    x_segment = resample(x_values, max_points)
-                else:
-                    x_segment = resample(x_values[random_indices[i]], max_points)
-            else:
-                x_segment = np.linspace(0, len(segment), len(segment))
-        else:
-            if x_values is not None:
-                if len(x_values.shape) == 1:
-                    x_segment = x_values[:len(segment)]
-                else:
-                    x_segment = x_values[random_indices[i]]
-            else:
-                x_segment = np.linspace(0, len(segment), len(segment))
-
-        ax.plot(x_segment, segment, linewidth=1.5, color='blue')
-        ax.set_title(selected_labels[i], fontsize=10, fontweight='bold')
-        ax.set_xlabel(x_label, fontsize=9)
-        ax.set_ylabel(y_label, fontsize=9)
-        ax.grid(True, linestyle='--', linewidth=0.5)
-
-    plt.tight_layout()
-    return fig, ax
-
-
-
-def plot_random_files_from_directory(directory, num_files=8):
-    """
-    Plots data from a specified number of random .csv files in the directory.
-    
-    Parameters:
-    directory (str): Path to the directory containing .csv files.
-    num_files (int): Number of files to randomly select and plot.
-    """
-    
-    # List .csv files in the directory
-    files = [f for f in os.listdir(directory) if f.endswith('.csv')]
-    
-    # Select random files based on num_files or available files if fewer
-    random_files = random.sample(files, min(num_files, len(files)))
-    num_plots = len(random_files)
-
-    # Calculate rows and columns needed to display the plots
-    cols = min(4, num_plots)  # Set a maximum of 4 columns
-    rows = math.ceil(num_plots / cols)  # Determine rows based on the number of plots
-
-    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
-    axes = axes.flatten() if num_plots > 1 else [axes]  # Flatten axes array if more than one plot
-
-    for i, file in enumerate(random_files):
-        file_path = os.path.join(directory, file)
-        df = pd.read_csv(file_path)
-        data = df['Data'].values
-
-        axes[i].plot(data)
-        axes[i].set_title(file)
-        axes[i].set_xlabel('Index')
-        axes[i].set_ylabel('Value')
-
-    # Hide any unused subplots
-    for j in range(i + 1, len(axes)):
-        axes[j].axis('off')
-
-    plt.tight_layout()
-    plt.show()
 
 def count_labels(loader):
     """
@@ -684,7 +560,7 @@ def create_dataset(file_label_map, engine_config, mode="binary",
                    f_sampling=10000, cutoff_freq=250, segment_length=10000, peak_segment=6, step=20,
                    apply_window=False, db=True, 
                    fault_types_available=None, include_real_anomalies_in_training=False,
-                   amplitude_range=(1.0, 5.0), test_size=0.3, val_size=0.2, normalization_method='min-max', seed=42):
+                   amplitude_range=(1.0, 5.0), test_size=0.3, val_size=0.2, normalization_method='min-max', add_noise=True, seed=42):
     """
     Creates training and test datasets using process_file.
     
@@ -770,6 +646,9 @@ def create_dataset(file_label_map, engine_config, mode="binary",
                 else:
                     new_train_segs.append(seg)
                     new_train_labels.append(label)
+
+            if add_noise:
+                new_train_segs = add_noise_to_segments(new_train_segs)
             
             # Add processed normal data to the dataset
             train_segments.extend(new_train_segs)
