@@ -684,7 +684,7 @@ def create_dataset(file_label_map, engine_config, mode="binary",
                    f_sampling=10000, cutoff_freq=250, segment_length=10000, peak_segment=6, step=20,
                    apply_window=False, db=True, 
                    fault_types_available=None, include_real_anomalies_in_training=False,
-                   amplitude_range=(1.0, 5.0), test_size=0.3, normalization_method='min-max', seed=42):
+                   amplitude_range=(1.0, 5.0), test_size=0.3, val_size=0.2, normalization_method='min-max', seed=42):
     """
     Creates training and test datasets using process_file.
     
@@ -713,6 +713,8 @@ def create_dataset(file_label_map, engine_config, mode="binary",
     
     train_segments = []
     train_labels = []
+    val_segments = []
+    val_labels = []
     test_segments = []
     test_labels = []
     common_freqs = None
@@ -732,10 +734,15 @@ def create_dataset(file_label_map, engine_config, mode="binary",
             common_freqs = freqs
         
         if label == "normal":
-            # Split normal segments into training and test sets
-            segs_train, segs_test, _, labels_test = train_test_split(
+            # First split: normal segments into train+validation and test sets.
+            segs_train_val, segs_test, labels_train_val, labels_test = train_test_split(
                 segs, labels_out, test_size=test_size, random_state=seed
             )
+            # Second split: further split train+validation into training and validation sets.
+            segs_train, segs_val, labels_train, labels_val = train_test_split(
+                segs_train_val, labels_train_val, test_size=val_size, random_state=seed
+            )
+
             # Inject synthetic faults ONLY into the training segments
             n_train = len(segs_train)
             n_modify = int(n_train * synthetic_fraction)
@@ -747,8 +754,6 @@ def create_dataset(file_label_map, engine_config, mode="binary",
                 if i in modify_indices:
                     # Randomly choose a fault type from available list
                     chosen_fault = random.choice(fault_types_available)
-                    # Randomly choose an amplitude from amplitude_range
-                    chosen_amp = random.uniform(*amplitude_range)
                     # Inject synthetic peaks using insert_synthetic_peaks()
                     mod_seg = insert_synthetic_peaks(
                         segment=seg,
@@ -769,51 +774,77 @@ def create_dataset(file_label_map, engine_config, mode="binary",
             # Add processed normal data to the dataset
             train_segments.extend(new_train_segs)
             train_labels.extend(new_train_labels)
+            val_segments.extend(segs_val)
+            val_labels.extend(labels_val)
             test_segments.extend(segs_test)
             test_labels.extend(labels_test)
-        
         else:
-            # For fault files, do not inject; add to test set (or to training if desired)
+            # For fault files, split the segments into train+validation and test sets.
+            segs_train_val, segs_test, labels_train_val, labels_test = train_test_split(
+                segs, labels_out, test_size=test_size, random_state=seed
+            )
+            segs_train, segs_val, labels_train, labels_val = train_test_split(
+                segs_train_val, labels_train_val, test_size=val_size, random_state=seed
+            )
             if include_real_anomalies_in_training:
-                train_segments.extend(segs)
-                train_labels.extend(labels_out)
-            test_segments.extend(segs)
-            test_labels.extend(labels_out)
+                # If desired, add fault segments to training.
+                train_segments.extend(segs_train)
+                train_labels.extend(labels_train)
+            else:
+                # Otherwise, add them to validation.
+                val_segments.extend(segs_train)
+                val_labels.extend(labels_train)
+            # Always add the fault segments from the secondary split to validation.
+            val_segments.extend(segs_val)
+            val_labels.extend(labels_val)
+            # Add fault segments to test.
+            test_segments.extend(segs_test)
+            test_labels.extend(labels_test)
     
     # Convert lists to arrays
     X_train_raw = np.array(train_segments, dtype=np.float32)
+    X_val_raw   = np.array(val_segments, dtype=np.float32)
     X_test_raw  = np.array(test_segments, dtype=np.float32)
     
     if normalization_method:
         # Normalize each segment
         X_train = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_train_raw])
+        X_val   = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_val_raw])
         X_test  = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_test_raw])
     else:
         X_train = X_train_raw
+        X_val   = X_val_raw
         X_test = X_test_raw
     
     y_train_raw = np.array(train_labels)
+    y_val_raw   = np.array(val_labels)
     y_test_raw  = np.array(test_labels)
     
     # Create binary labels: "normal" as 0, others as 1
     y_train_bin = np.array([0 if lbl=="normal" else 1 for lbl in y_train_raw])
+    y_val_bin   = np.array([0 if lbl == "normal" else 1 for lbl in y_val_raw])
     y_test_bin  = np.array([0 if lbl=="normal" else 1 for lbl in y_test_raw])
     
     # Create multiclass labels using LabelEncoder
     le = LabelEncoder()
     y_train_multi = le.fit_transform(y_train_raw)
+    y_val_multi   = le.transform(y_val_raw)
     y_test_multi  = le.transform(y_test_raw)
     
     if mode == "binary":
         final_y_train = y_train_bin
+        final_y_val   = y_val_bin
         final_y_test  = y_test_bin
     else:
         final_y_train = y_train_multi
+        final_y_val   = y_val_multi
         final_y_test  = y_test_multi
     
     return {
         "X_train": X_train,
         "y_train": final_y_train,
+        "X_val": X_val,
+        "y_val": final_y_val,
         "X_test": X_test,
         "y_test": final_y_test,
         "freqs": common_freqs,
@@ -825,15 +856,22 @@ def create_dataloaders(dataset, batch_size=16):
     """
     Creates PyTorch DataLoaders from the dataset dictionary.
     """
+    # Training DataLoader
     X_train = torch.tensor(dataset["X_train"], dtype=torch.float32).unsqueeze(1)
     y_train = torch.tensor(dataset["y_train"], dtype=torch.long)
+    train_ds = TensorDataset(X_train, y_train)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+
+    # Validation DataLoader
+    X_val = torch.tensor(dataset["X_val"], dtype=torch.float32).unsqueeze(1)
+    y_val = torch.tensor(dataset["y_val"], dtype=torch.long)
+    val_ds = TensorDataset(X_val, y_val)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+
+    # Test DataLoader
     X_test = torch.tensor(dataset["X_test"], dtype=torch.float32).unsqueeze(1)
     y_test = torch.tensor(dataset["y_test"], dtype=torch.long)
-    
-    train_ds = TensorDataset(X_train, y_train)
     test_ds = TensorDataset(X_test, y_test)
-    
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
     
-    return train_loader, test_loader
+    return train_loader, val_loader, test_loader
