@@ -777,3 +777,4 @@ def generate_synthetic_peaks(vae_model, num_samples, latent_dim, segment_mins, s
         denormalized_peaks.append(denormalized_segment)
 
     return np.array(denormalized_peaks)
+    
