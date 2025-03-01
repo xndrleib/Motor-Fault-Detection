@@ -29,11 +29,6 @@ def get_rotor_bar_freqs(engine_config: Dict[str, float], n_range=range(1,4)) -> 
     Returns
     -------
     List[float]
-    
-    References
-    ----------
-    [1] Thomson & Culbert (2014)
-    [2] Bellini et al. (2008)
     """
     f1 = Decimal(str(engine_config['f1']))
     s = Decimal(str(engine_config['s']))
@@ -249,12 +244,4 @@ if __name__ == '__main__':
     print("Bearing outer race defect frequency:", ANOMALY_FREQS['bearing defect (outer race)'](engine_config))
     print("Bearing inner race defect frequency:", ANOMALY_FREQS['bearing defect (inner race)'](engine_config))
     print("Other mechanical defect frequencies:", ANOMALY_FREQS['other mechanical defects'](engine_config))
-
-
-    # Rotor bar defect frequencies: [41.6, 44.4, 47.2, 52.8, 55.6, 58.4]
-    # Eccentricity frequencies: [-1139.983, -743.322, -346.661, 446.661, 843.322, 1239.983]
-    # Inter-turn short circuit frequencies: [-19.999, 3.334, 26.667, 30.001, 50.0, 53.334, 73.333, 76.667, 80.001, 96.666, 100.0, 103.334, 119.999, 123.333, 126.667, 146.666, 150.0, 169.999, 173.333, 196.666, 219.999]
-    # Bearing rolling element defect frequency: [-47.576496009847844]
-    # Bearing outer race defect frequency: [-308.93442795570587]
-    # Bearing inner race defect frequency: [495.59842795570586]
-    # Other mechanical defect frequencies: [-19.999, 3.334, 26.667, 73.333, 96.666, 119.999]
+    
