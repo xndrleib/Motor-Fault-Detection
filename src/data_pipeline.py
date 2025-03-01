@@ -10,40 +10,6 @@ from src.electrical_signature_frequencies import ANOMALY_FREQS
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-def add_noise_to_segment(fft_segment, noise_factor=0.05):
-    """
-    Adds white Gaussian noise to an FFT segment.
-    
-    Parameters:
-      fft_segment: np.ndarray
-          The FFT-transformed segment (in dB scale).
-      noise_factor: float
-          Fraction of the segment's standard deviation used as noise std.
-    
-    Returns:
-      np.ndarray: The noisy FFT segment.
-    """
-    noise_std = noise_factor * np.std(fft_segment)
-    noise = np.random.normal(0, noise_std, fft_segment.shape)
-    return fft_segment + noise
-
-
-def add_noise_to_segments(fft_segments, noise_factor=0.05):
-    """
-    Applies white noise to each FFT segment in a 2D array.
-    
-    Parameters:
-      fft_segments: np.ndarray
-          A 2D array where each row is an FFT segment.
-      noise_factor: float
-          Fraction of each segment's standard deviation used as noise std.
-    
-    Returns:
-      np.ndarray: The array of noisy FFT segments.
-    """
-    return np.array([add_noise_to_segment(seg, noise_factor) for seg in fft_segments])
-
-
 def read_oscilloscope_data(file_path, output_path=None):
     time = []
     channel_1 = []
@@ -395,19 +361,14 @@ def insert_synthetic_peaks(segment, fft_freqs, fault_type, engine_config,
         modified_segment[start_idx:end_idx] += profile
     return modified_segment
 
-
 def process_file(file_path, engine_config, label, 
-                 f_sampling=10000, cutoff_freq=250, segment_length=10000, peak_segment=6, step=20, 
+                 f_sampling=10000, cutoff_freq=250, segment_length=10000, step=20, 
                  apply_window=False, db=True,
                  synthetic_fault_fraction=0.0, 
-                 fault_types=None,
-                 amplitude_range=(1.0, 5.0),
-                 peak_generator=generate_synthetic_peak,
-                 peak_method='gaussian',
-                 peak_sigma=2.0):
+                 fault_types=None, anomaly_injector=None):
     """
     Processes a single file by reading raw data, segmenting, performing FFT,
-    and optionally injecting synthetic faults (if label=='normal' and synthetic_fault_fraction>0).
+    and optionally injecting synthetic faults (if label=='normal' and synthetic_fault_fraction>0). 
 
     Parameters:
     -----------
@@ -433,14 +394,7 @@ def process_file(file_path, engine_config, label,
         Fraction (0.0 to 1.0) of normal segments to modify with synthetic faults (default 0.0).
     fault_types : list of str, optional
         List of possible fault types to inject (required if synthetic_fault_fraction>0).
-    amplitude_range : tuple, optional
-        (min_amp, max_amp) range for random peak amplitudes (default (1.0, 5.0)).
-    peak_generator : callable, optional
-        Function that generates a peak profile (default generate_synthetic_peak).
-    peak_method : str, optional
-        Method used by peak_generator (default 'gaussian').
-    peak_sigma : float, optional
-        Sigma parameter if using a Gaussian peak generator (default 2.0).
+    anomaly_injector: instance of BaseAnomalyInjector (or CompositeAnomalyInjector) to perform injection.
 
     Returns:
     --------
@@ -485,18 +439,8 @@ def process_file(file_path, engine_config, label,
                 # Pick a random fault type
                 chosen_fault = random.choice(fault_types)
                 
-                # Insert synthetic peaks
-                mod_seg = insert_synthetic_peaks(
-                    segment=seg,
-                    fft_freqs=freqs,
-                    fault_type=chosen_fault,
-                    engine_config=engine_config,
-                    peak_segment=peak_segment,
-                    peak_generator=peak_generator,
-                    amplitude_range=amplitude_range,
-                    sigma=peak_sigma,
-                    method=peak_method
-                )
+                # Insert anomalies
+                mod_seg = anomaly_injector.inject(seg, freqs, chosen_fault)
 
                 all_fft_segments.append(mod_seg)
                 all_labels.append(chosen_fault)
@@ -557,17 +501,18 @@ def add_smoothed_peak_to_files(input_directory, output_directory, peak_height_hy
     
 
 def create_dataset(file_label_map, engine_config, mode="binary",
-                   f_sampling=10000, cutoff_freq=250, segment_length=10000, peak_segment=6, step=20,
+                   f_sampling=10000, cutoff_freq=250, segment_length=10000, step=20,
                    apply_window=False, db=True, 
                    fault_types_available=None, include_real_anomalies_in_training=False,
-                   amplitude_range=(1.0, 5.0), test_size=0.3, val_size=0.2, normalization_method='min-max', add_noise=True, seed=42):
+                   test_size=0.3, val_size=0.2, normalization_method='min-max', 
+                   seed=42, anomaly_injector=None):
     """
     Creates training and test datasets using process_file.
     
     For files labeled "normal":
       - Process the file without synthetic injection.
       - Split the resulting segments into training and test sets to avoid data leakage.
-      - Inject synthetic faults (with randomized amplitude) into a fraction of the training segments.
+      - Inject synthetic faults (with randomized amplitude) into a fraction of the training segments using the provided anomaly_injector.
       
     For fault files, synthetic injection is not applied.
     
@@ -575,7 +520,13 @@ def create_dataset(file_label_map, engine_config, mode="binary",
       - Binary mode: 0.5 (i.e. 50% of training normal segments are injected)
       - Multiclass mode: k/(k+1), where k is the number of fault types available.
       
-    Returns a dictionary with training and test arrays, FFT frequency bins, and a LabelEncoder (for multiclass).
+    Parameters:
+      ...
+      anomaly_injector : instance of BaseAnomalyInjector (or CompositeAnomalyInjector), optional.
+                           If provided, it will be used to inject synthetic anomalies into training segments.
+    
+    Returns:
+      dict: A dictionary with keys "X_train", "y_train", "X_val", "y_val", "X_test", "y_test", "freqs", and optionally "label_encoder".
     """
     if mode == "binary":
         synthetic_fraction = 0.5
@@ -596,30 +547,29 @@ def create_dataset(file_label_map, engine_config, mode="binary",
     common_freqs = None
     
     for file_path, label in file_label_map.items():
-        # For each file, process without injection (synthetic_fault_fraction=0)
+        # Process file without injection to obtain baseline segments.
         segs, labels_out, freqs = process_file(
             file_path, engine_config, label,
             f_sampling=f_sampling, cutoff_freq=cutoff_freq,
             segment_length=segment_length, step=step,
             apply_window=apply_window, db=db,
-            synthetic_fault_fraction=0.0,  # No injection here
+            synthetic_fault_fraction=0.0,  # No injection in baseline processing.
             fault_types=None,
-            amplitude_range=amplitude_range
+            anomaly_injector=None
         )
         if common_freqs is None:
             common_freqs = freqs
         
         if label == "normal":
-            # First split: normal segments into train+validation and test sets.
+            # Split normal segments into train+validation and test sets.
             segs_train_val, segs_test, labels_train_val, labels_test = train_test_split(
                 segs, labels_out, test_size=test_size, random_state=seed
             )
-            # Second split: further split train+validation into training and validation sets.
+            # Further split train+validation into training and validation sets.
             segs_train, segs_val, labels_train, labels_val = train_test_split(
                 segs_train_val, labels_train_val, test_size=val_size, random_state=seed
             )
 
-            # Inject synthetic faults ONLY into the training segments
             n_train = len(segs_train)
             n_modify = int(n_train * synthetic_fraction)
             modify_indices = random.sample(range(n_train), n_modify)
@@ -627,30 +577,17 @@ def create_dataset(file_label_map, engine_config, mode="binary",
             new_train_segs = []
             new_train_labels = []
             for i, seg in enumerate(segs_train):
-                if i in modify_indices:
-                    # Randomly choose a fault type from available list
+                if i in modify_indices and anomaly_injector is not None:
+                    # Randomly choose a fault type from available list.
                     chosen_fault = random.choice(fault_types_available)
-                    # Inject synthetic peaks using insert_synthetic_peaks()
-                    mod_seg = insert_synthetic_peaks(
-                        segment=seg,
-                        fft_freqs=freqs,
-                        fault_type=chosen_fault,
-                        engine_config=engine_config,
-                        peak_segment=peak_segment,
-                        peak_generator=generate_synthetic_peak,
-                        sigma=2.0,
-                        method='gaussian'
-                    )
+                    # Inject synthetic anomaly using the provided injector.
+                    mod_seg = anomaly_injector.inject(seg, freqs, chosen_fault)
                     new_train_segs.append(mod_seg)
                     new_train_labels.append(chosen_fault)
                 else:
                     new_train_segs.append(seg)
                     new_train_labels.append(label)
-
-            if add_noise:
-                new_train_segs = add_noise_to_segments(new_train_segs)
             
-            # Add processed normal data to the dataset
             train_segments.extend(new_train_segs)
             train_labels.extend(new_train_labels)
             val_segments.extend(segs_val)
@@ -658,7 +595,7 @@ def create_dataset(file_label_map, engine_config, mode="binary",
             test_segments.extend(segs_test)
             test_labels.extend(labels_test)
         else:
-            # For fault files, split the segments into train+validation and test sets.
+            # For fault files, split segments into train+validation and test sets.
             segs_train_val, segs_test, labels_train_val, labels_test = train_test_split(
                 segs, labels_out, test_size=test_size, random_state=seed
             )
@@ -666,45 +603,37 @@ def create_dataset(file_label_map, engine_config, mode="binary",
                 segs_train_val, labels_train_val, test_size=val_size, random_state=seed
             )
             if include_real_anomalies_in_training:
-                # If desired, add fault segments to training.
                 train_segments.extend(segs_train)
                 train_labels.extend(labels_train)
             else:
-                # Otherwise, add them to validation.
                 val_segments.extend(segs_train)
                 val_labels.extend(labels_train)
-            # Always add the fault segments from the secondary split to validation.
             val_segments.extend(segs_val)
             val_labels.extend(labels_val)
-            # Add fault segments to test.
             test_segments.extend(segs_test)
             test_labels.extend(labels_test)
     
-    # Convert lists to arrays
     X_train_raw = np.array(train_segments, dtype=np.float32)
     X_val_raw   = np.array(val_segments, dtype=np.float32)
     X_test_raw  = np.array(test_segments, dtype=np.float32)
     
     if normalization_method:
-        # Normalize each segment
         X_train = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_train_raw])
         X_val   = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_val_raw])
         X_test  = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_test_raw])
     else:
         X_train = X_train_raw
         X_val   = X_val_raw
-        X_test = X_test_raw
+        X_test  = X_test_raw
     
     y_train_raw = np.array(train_labels)
     y_val_raw   = np.array(val_labels)
     y_test_raw  = np.array(test_labels)
     
-    # Create binary labels: "normal" as 0, others as 1
     y_train_bin = np.array([0 if lbl=="normal" else 1 for lbl in y_train_raw])
-    y_val_bin   = np.array([0 if lbl == "normal" else 1 for lbl in y_val_raw])
+    y_val_bin   = np.array([0 if lbl=="normal" else 1 for lbl in y_val_raw])
     y_test_bin  = np.array([0 if lbl=="normal" else 1 for lbl in y_test_raw])
     
-    # Create multiclass labels using LabelEncoder
     le = LabelEncoder()
     y_train_multi = le.fit_transform(y_train_raw)
     y_val_multi   = le.transform(y_val_raw)
@@ -729,6 +658,7 @@ def create_dataset(file_label_map, engine_config, mode="binary",
         "freqs": common_freqs,
         "label_encoder": le if mode=="multiclass" else None
     }
+
 
 
 def create_dataloaders(dataset, batch_size=16):
