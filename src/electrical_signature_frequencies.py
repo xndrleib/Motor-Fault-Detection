@@ -87,29 +87,49 @@ def get_eccentricity_freqs(engine_config: Dict[str, float], n_range=range(1,4), 
         freqs.extend([f_plus, f_minus])
     return sorted(float(f) for f in freqs)
 
-def get_itsc_freqs(engine_config: Dict[str, float], k_values=range(1,4), m_range=range(1,4)) -> List[float]:
+def get_itsc_freqs(engine_config: Dict[str, float], k_range=range(1, 4, 2), m_range=range(0, 2)) -> List[float]:
     """
-    Compute inter-turn short circuit related frequencies.
+    Compute ITSC-induced stator current harmonic frequencies.
     
-    Formulae often consider:
-    - k*f1 and sidebands (k*f1 ± m*f_r)
-    
+    Formulae:
+        f_ITSC = k f_s ∓ m f_r
+    where:
+      - f_s is the supply frequency,
+      - f_r is the rotor (rotation) frequency,
+      - k is an odd harmonic multiplier (k = 1, 3, 5, ...),
+      - m is an integer representing the sideband order.
+
     Parameters
     ----------
     engine_config : dict
-        'f1', 'f_r'
-    k_values : range
-    m_range : range
+        Dictionary containing the engine configuration parameters:
+          - 'f_s': float
+              The supply frequency.
+          - 'f_r': float
+              The rotor (rotation) frequency.
+    k_range : range, optional
+        Range of odd harmonic multipliers k to consider 
+        (default is range(1, 4, 2) corresponding to [1, 3]).
+    m_range : range, optional
+        Range of sideband multipliers k to consider 
+        (default is range(0, 2)).
     
     Returns
     -------
     List[float]
+        Sorted list of computed ITSC-induced stator current harmonic frequencies.
+
+    Literature
+    -------
+    Henriques, K.; Laadjal, K.; Cardoso, A.J.M. 
+    Inter-Turn Short-Circuit Fault Detection in Synchronous Reluctance Machines, Based on Current Analysis. 
+    Eng. Proc. 2022, 24, 23. https://doi.org/10.3390/IECMA2022-12884
     """
     f1 = Decimal(str(engine_config['f1']))
     f_r = Decimal(str(engine_config['f_r']))
     freqs = []
     
-    for k in k_values:
+    for k in k_range:
         k_d = Decimal(k)
         main = k_d * f1
         candidates = [main]
