@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from scipy.signal import hann
 
 import random
 from src.electrical_signature_frequencies import ANOMALY_FREQS
@@ -77,10 +76,6 @@ def segment_signal(signal, segment_length, step=None, overlap=None, apply_window
         ]
     else:
         raise ValueError("Either 'step' or 'overlap' must be specified.")
-
-    if apply_window:
-        hann_window = hann(segment_length)
-        segments = [seg * hann_window for seg in segments]
 
     return np.array(segments)
 
