@@ -22,15 +22,13 @@ class BaseAnomalyInjector(ABC):
         pass
 
 class GaussianPeakInjector(BaseAnomalyInjector):
-    def __init__(self, engine_config, peak_segment=6, amplitude_range=(1.0, 5.0), sigma_range=(0.5, 1.5)):
+    def __init__(self, peak_segment=6, amplitude_range=(1.0, 5.0), sigma_range=(0.5, 1.5)):
         """
         Parameters:
-            engine_config (dict): Engine configuration for fault frequency calculation.
             peak_segment (int): Half-window size (in frequency bins) around each fault frequency.
             amplitude_range (tuple): Range for random peak amplitudes specific to Gaussian peaks.
             sigma_range (tuple): Range to randomly choose sigma for each injection.
         """
-        self.engine_config = engine_config
         self.peak_segment = peak_segment
         self.amplitude_range = amplitude_range
         self.sigma_range = sigma_range
@@ -41,10 +39,8 @@ class GaussianPeakInjector(BaseAnomalyInjector):
         profile = amplitude * np.exp(-((x - center) ** 2) / (2 * sigma ** 2))
         return profile
 
-    def inject(self, segment, fft_freqs, fault_type):
+    def inject(self, segment, fft_freqs, fault_freqs):
         modified_segment = segment.copy()
-        # Retrieve target fault frequencies using the fault signature function
-        fault_freqs = ANOMALY_FREQS.get(fault_type, lambda ec: [])(self.engine_config)
         for freq in fault_freqs:
             amp_val = random.uniform(*self.amplitude_range)
             sigma_val = random.uniform(*self.sigma_range)
@@ -60,7 +56,7 @@ class NoiseInjector(BaseAnomalyInjector):
     def __init__(self, noise_factor=0.05):
         self.noise_factor = noise_factor
 
-    def inject(self, segment, fft_freqs=None, fault_type=None):
+    def inject(self, segment, fft_freqs=None, fault_freqs=None):
         noise_std = self.noise_factor * np.std(segment)
         noise = np.random.normal(0, noise_std, segment.shape)
         return segment + noise
@@ -76,14 +72,14 @@ class CompositeAnomalyInjector(BaseAnomalyInjector):
         """
         self.injectors = injectors
 
-    def inject(self, segment, fft_freqs, fault_type, injector_keys=None):
+    def inject(self, segment, fft_freqs, fault_freqs, injector_keys=None):
         """
         Sequentially applies each selected injector's anomaly into the segment.
         
         Parameters:
             segment (np.ndarray): The FFT segment to modify.
             fft_freqs (np.ndarray): Frequency bins corresponding to the FFT segment.
-            fault_type (str): The fault type for injection.
+            fault_freqs (str): The fault frequencies to inject.
             injector_keys (list, optional): List of keys specifying which injectors to apply.
                                             If None, all injectors are applied.
         
@@ -116,7 +112,7 @@ class CompositeAnomalyInjector(BaseAnomalyInjector):
             injector = self.injectors[key]
             
             try:
-                modified_segment = injector.inject(modified_segment, fft_freqs, fault_type)
+                modified_segment = injector.inject(modified_segment, fft_freqs, fault_freqs)
             except TypeError:
                 modified_segment = injector.inject(modified_segment, fft_freqs)
 

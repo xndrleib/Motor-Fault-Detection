@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from scipy.signal import convolve, hann
-import glob
+from scipy.signal import hann
+
 import random
 from src.electrical_signature_frequencies import ANOMALY_FREQS
 from sklearn.model_selection import train_test_split
@@ -361,7 +361,7 @@ def insert_synthetic_peaks(segment, fft_freqs, fault_type, engine_config,
         modified_segment[start_idx:end_idx] += profile
     return modified_segment
 
-def process_file(file_path, engine_config, label, 
+def process_file(file_path, label, 
                  f_sampling=10000, cutoff_freq=250, segment_length=10000, step=20, 
                  apply_window=False, db=True,
                  synthetic_fault_fraction=0.0, 
@@ -374,8 +374,6 @@ def process_file(file_path, engine_config, label,
     -----------
     file_path : str
         Path to the raw oscilloscope data file.
-    engine_config : dict
-        Dictionary of engine parameters used for fault signature calculations.
     label : str
         Label for the file ('normal' or a specific fault type).
     f_sampling : int, optional
@@ -476,31 +474,7 @@ def count_labels(loader):
                 label_counts[label] = 1
     return label_counts
 
-def add_smoothed_peak_to_files(input_directory, output_directory, peak_height_hybrid, peak_center_hybrid, peak_base_width, kernel_size):
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-        
-    for csv_file in glob.glob(input_directory + '/*.csv'):
-        data = pd.read_csv(csv_file)
-
-        triangle_peak = np.zeros(len(data))
-        half_base_width = peak_base_width // 2
-        start_index = peak_center_hybrid - half_base_width
-        end_index = start_index + peak_base_width
-        triangle_peak[start_index:start_index + half_base_width] = np.linspace(0, peak_height_hybrid, half_base_width)
-        triangle_peak[start_index + half_base_width:end_index] = np.linspace(peak_height_hybrid, 0, peak_base_width - half_base_width)
-
-        gaussian_kernel = np.exp(-np.linspace(-2, 2, kernel_size)**2)
-        gaussian_kernel /= gaussian_kernel.sum() 
-
-        smoothed_peak = convolve(triangle_peak, gaussian_kernel, mode='same')
-
-        data_with_smoothed_peak = data.iloc[:, 0] + smoothed_peak
-
-        return data_with_smoothed_peak
-    
-
-def create_dataset(file_label_map, engine_config, mode="binary",
+def create_dataset(file_label_map, mode="binary",
                    f_sampling=10000, cutoff_freq=250, segment_length=10000, step=20,
                    apply_window=False, db=True, 
                    fault_types_available=None, include_real_anomalies_in_training=False,
@@ -549,7 +523,7 @@ def create_dataset(file_label_map, engine_config, mode="binary",
     for file_path, label in file_label_map.items():
         # Process file without injection to obtain baseline segments.
         segs, labels_out, freqs = process_file(
-            file_path, engine_config, label,
+            file_path, label,
             f_sampling=f_sampling, cutoff_freq=cutoff_freq,
             segment_length=segment_length, step=step,
             apply_window=apply_window, db=db,

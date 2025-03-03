@@ -134,6 +134,9 @@ def get_itsc_freqs(engine_config: Dict[str, float], k_range=range(1, 4, 2), m_ra
         main = k_d * f1
         candidates = [main]
         for m in m_range:
+            if m == 0:
+                # Skip adding duplicate values when m equals zero
+                continue
             m_d = Decimal(m)
             candidates.append(main + m_d*f_r)
             candidates.append(main - m_d*f_r)
