@@ -18,6 +18,7 @@ dependencies:
   # Machine learning
   - scikit-learn
   - torch
+  - torchvision
   # Jupyter Environment
   - ipykernel
   - jupyterlab
