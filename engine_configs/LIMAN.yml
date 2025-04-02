@@ -1,14 +1,17 @@
-# Motor model: RA180L4/2У3, 1470 RPM, 17 kW. Bearings: 6310 and 6309.
-f1: 50                 # Main supply frequency in Hz
-f_sampling: 10000      # Sampling frequency in Hz (10 kHz)
-s: 0.028               # Motor slip (2.8% nominal, 2.67% calculated)
-R_s: 34                # Number of rotor bars (slots)
-p: 2                   # Number of pole pairs (f_r / f1)
-f_r: 23.333            # Rotor (shaft) rotational frequency in Hz (1460 RPM)
-n: 8                   # Number of balls in the bearing
-beta: 0                # Contact angle in radians
-D_pit: 15.0810         # Pitch circle diameter (center of ball path) in mm
-D_ball: 65             # Ball diameter in mm
-# Notes:
-# - The number of coils in the motor winding is not specified.
-# - Commutation frequency in the solid-state rectifier is not provided.
+# Engine configuration file for motor analysis
+engine:
+  motor_model: "RA180L4/2У3"     # Electric motor model
+  power: 17                      # Power in kilowatts (kW)
+  rpm: 1470                      # Rotational speed in revolutions per minute (RPM)
+  bearings: "6309/6310"          # Types of bearings used
+mcsa:
+  f1: 50                         # Main supply frequency in Hertz (Hz)
+  f_sampling: 10000              # Sampling frequency in Hertz (Hz)
+  s: 0.028                       # Motor slip: (2.8% nominal, 2.67% calculated)
+  R_s: 34                        # Number of rotor bars (slots)
+  p: 2                           # Number of pole pairs (f_r / f1)
+  f_r: 23.333                    # Rotor (shaft) rotational frequency in Hertz (Hz)
+  n: 8                           # Number of balls in the bearing
+  beta: 0                        # Contact angle in radians
+  D_pit: 15.081                  # Pitch circle diameter (center of ball path) in millimeters (mm)
+  D_ball: 65                     # Ball diameter in millimeters (mm)
