@@ -1,0 +1,13 @@
+experiment_id: experiment_2
+date: "2023-01-20"
+description: "Motor running at 1460 RPM with rotor imbalance."
+files:
+  - file_name: "20_01_1460_об_мин_с_дисбалансом_ротора.txt"
+    description: "Data from a motor running at 1460 RPM with rotor imbalance."
+    experiment_time: "2023-01-20 12:49:36"
+    module: "E-2010B (8T773102)"
+    frames: 100000
+    input_rate: "10 kHz"
+    channel: 2
+    time_scale: "Seconds"
+notes: "Single file experiment focusing on rotor imbalance at a specific operational speed."

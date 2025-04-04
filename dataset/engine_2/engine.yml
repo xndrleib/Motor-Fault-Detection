@@ -1,0 +1,21 @@
+# Engine configuration file for motor analysis
+engine:
+  motor_model: "АИP 80B4 IM1081" # Electric motor model
+  power: 1.5                     # Power in kilowatts (kW)
+  rpm: 1390                      # Rotational speed in revolutions per minute (RPM)
+  voltage: "380V/50Hz"           # Supply voltage: 380 Volts, 50 Hertz
+  efficiency: 78                 # Efficiency as a percentage (%)
+  nominal_current: 6.39          # Nominal current in amperes (A)
+  power_factor: 0.79             # Power factor (cos φ)
+  bearings: "6204"               # Types of bearings used
+mcsa:
+  f1: 50                         # Main supply frequency in Hertz (Hz)
+  f_sampling: 10000              # Sampling frequency in Hertz (Hz)
+  s: 0.073                       # Motor slip: 1500-1390/1500 = 0.073
+  R_s:                           # Number of rotor bars (slots)
+  p: 2                           # Number of pole pairs (f_r / f1)
+  f_r: 23.17                     # Rotor (shaft) rotational frequency in Hertz (Hz): 1390 RPM / 60
+  n: 8                           # Number of balls in the bearing
+  beta: 0                        # Contact angle in radians
+  D_pit: 34.5                    # Pitch circle diameter (center of ball path) in millimeters (mm)
+  D_ball: 7.94                   # Ball diameter in millimeters (mm)

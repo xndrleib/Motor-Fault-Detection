@@ -1,0 +1,13 @@
+experiment_id: experiment_4
+date: "2023-02-21"
+description: "Motor operating at maximum RPM with imbalance."
+files:
+  - file_name: "21 02 дисбаланс макс обороты 100%.txt"
+    description: "Data from a motor operating at maximum RPM with imbalance."
+    experiment_time: "2023-02-21 10:04:13"
+    module: "E-2010B (8T773112)"
+    frames: 50000
+    input_rate: "10 kHz"
+    channel: 1
+    time_scale: "Seconds"
+notes: "Single file experiment capturing motor imbalance under maximum speed conditions."

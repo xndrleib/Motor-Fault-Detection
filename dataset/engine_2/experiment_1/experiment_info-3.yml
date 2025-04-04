@@ -1,0 +1,21 @@
+experiment_id: engine_3
+collection_date: "2024-10-03"
+stand: "Gray Stand"
+stand_url: "https://wiki.liman-tech.ru/s/e322948b-9045-4d05-99ae-bcb9f495a847"
+data_format: "CSV"
+measurement_types:
+  - type: "current"
+    description: "Time-series current data collected under varying load conditions. Data is organized by load level and motor phase."
+  - type: "vibration"
+    description: "Time-series vibration data collected under varying load conditions. CSV files are stored directly within load condition folders."
+load_conditions:
+  - label: "1st_load"
+    values: [0, 20, 40, 60, 80, 100]
+  - label: "2nd_load"
+    values: [0, 20, 40, 60, 80, 100]
+  - label: "3rd_load"
+    values: [0, 20, 40, 60, 80, 100]
+  - label: "4th_load"
+    values: [60, 80, 100]
+defect: "Bearing defect"
+notes: "Motor speed is constant; load variations are introduced via generator parameter adjustments. Data for current and vibration were acquired sequentially using the same equipment."

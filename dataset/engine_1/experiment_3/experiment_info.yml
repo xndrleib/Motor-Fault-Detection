@@ -1,0 +1,29 @@
+experiment_id: experiment_3
+date: "2023-02-07"
+description: "Phase A current measurements under different fault conditions."
+files:
+  - file_name: "0702  межвитковые фазы A ток фазы А.txt"
+    description: "Data related to phase A currents with inter-turn faults."
+    experiment_time: "2023-02-07 11:11:56"
+    module: "E-2010B (8T773112)"
+    frames: 50000
+    input_rate: "10 kHz"
+    channel: 1
+    time_scale: "Milliseconds"
+  - file_name: "0702  перекос фазы A ток фазы А.txt"
+    description: "Data from phase A currents with phase imbalance."
+    experiment_time: "2023-02-07 10:49:31"
+    module: "E-2010B (8T773112)"
+    frames: 50000
+    input_rate: "10 kHz"
+    channel: 1
+    time_scale: "Milliseconds"
+  - file_name: "0702 без перекосов фаза A.txt"
+    description: "Data from phase A currents without any imbalances."
+    experiment_time: "2023-02-07 10:21:48"
+    module: "E-2010B (8T773112)"
+    frames: 100000
+    input_rate: "10 kHz"
+    channel: 1
+    time_scale: "Milliseconds"
+notes: "Comparison of phase A current behavior under fault and normal operating conditions."

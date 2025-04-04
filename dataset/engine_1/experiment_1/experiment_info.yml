@@ -1,0 +1,29 @@
+experiment_id: experiment_1
+date: "2023-01-11"
+description: "Motor operation under load and idle conditions."
+files:
+  - file_name: "ВКЛ-ВЫКЛ нагрузка 100% 11 01.txt"
+    description: "Data of motor operation under 100% load with switching on/off."
+    experiment_time: "2023-01-11 12:05:10"
+    module: "E-2010B (8T773102)"
+    frames: 600000
+    input_rate: "10 kHz"
+    channel: 2
+    time_scale: "Seconds"
+  - file_name: "нагрузка 100% 11 01.txt"
+    description: "Data of motor operating at 100% load."
+    experiment_time: "2023-01-11 12:02:45"
+    module: "E-2010B (8T773102)"
+    frames: 600000
+    input_rate: "10 kHz"
+    channel: 2
+    time_scale: "Seconds"
+  - file_name: "холостой ход 11 01.txt"
+    description: "Data from a motor running at no load (idle)."
+    experiment_time: "2023-01-11 11:59:08"
+    module: "E-2010B (8T773102)"
+    frames: 600000
+    input_rate: "10 kHz"
+    channel: 2
+    time_scale: "Seconds"
+notes: "Experiment conducted to capture motor behavior under full load and idle conditions."
