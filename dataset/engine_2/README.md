@@ -70,4 +70,4 @@ Each experiment folder (e.g., `experiment_1`) includes an `experiment_info.yml` 
 - **Usage:**  
   This dataset is intended for researchers and engineers performing fault diagnosis, condition monitoring, and predictive maintenance analyses on electric motors.
 - **Further Documentation:**  
-  Refer to the `experiment_info.yml` files within each experiment folder (under both `current/` and `vibration/`) for detailed metadata on each load condition.
+  Refer to the `experiment_info.yml` files within each experiment folder for detailed metadata on each load condition.
