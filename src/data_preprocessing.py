@@ -519,12 +519,12 @@ def spectrogram_samples_using_scipy(noisy_signal, window_multiplier, num_samples
     Returns spectrogram samples from input signal
 
     Parameters:
-    noisy_signal: input signal before preprocessing
-    window_multiplier: length of signal sample before preprocessing as multiplier before 10000
-    num_samples: number of returning samples
+    - noisy_signal: input signal before preprocessing
+    - window_multiplier: length of signal sample before preprocessing as multiplier before 10000
+    - num_samples: number of returning samples
 
     Returns:
-    spectrogram_samples: list of scipy spectrogram samples
+    - spectrogram_samples: list of scipy spectrogram samples
     """
     sample_len = 10000 * window_multiplier
     starts_indices = np.random.choice(len(noisy_signal)-sample_len, num_samples, replace=False)
@@ -541,12 +541,12 @@ def spectrogram_samples_manual(noisy_signal, window_multiplier, num_samples):
     Returns spectrogram samples from input signal
 
     Parameters:
-    noisy_signal: input signal before preprocessing
-    window_multiplier: length of signal sample before preprocessing as multiplier before 10000
-    num_samples: number of returning samples
+    - noisy_signal: input signal before preprocessing
+    - window_multiplier: length of signal sample before preprocessing as multiplier before 10000
+    - num_samples: number of returning samples
 
     Returns:
-    spectrogram_samples: list of manual spectrogram samples
+    - spectrogram_samples: list of manual spectrogram samples
     """
     sample_len = 10000 * window_multiplier
     starts_indices = np.random.choice(len(noisy_signal)-sample_len, num_samples, replace=False)
@@ -564,13 +564,13 @@ def plot_spectrogram_samples(signal_samples, axis_labels=None, ylim=250):
     Plots spectrogram samples (max samples is 4)
 
     Parameters:
-    signal_samples: samples of signal
-    axis_labels: optional tuple (x_label, y_label) for x and y axis labels
-    ylim: frequencies axis upper limit
+    - signal_samples: samples of signal
+    - axis_labels: optional tuple (x_label, y_label) for x and y axis labels
+    - ylim: frequencies axis upper limit
 
     Returns:
-    fig: matplotlib figure
-    ax: matplotlib axis
+    - fig: matplotlib figure
+    - ax: matplotlib axis
     """
     num_samples = min(len(signal_samples), 4) 
     fig, axes = plt.subplots(num_samples // 2, 2, figsize=(15, 5 * (num_samples // 2)))
@@ -592,13 +592,13 @@ def scipy_to_pillow(f, t, Sxx, ylim=250, img_size=64):
     Converts spectrogram from scipy format to pillow image
 
     Parameters:
-    f: array of sample frequencies (from scipy.signal.spectrogram output)
-    t: array of segment times (from scipy.signal.spectrogram output)
-    Sxx: scipy spectrogram (from scipy.signal.spectrogram output)
-    img_size: size of output image
+    - f: array of sample frequencies (from scipy.signal.spectrogram output)
+    - t: array of segment times (from scipy.signal.spectrogram output)
+    - Sxx: scipy spectrogram (from scipy.signal.spectrogram output)
+    - img_size: size of output image
 
     Returns:
-    img: pillow image
+    - img: pillow image
     """
     fig = plt.figure(frameon=False)
     fig.set_size_inches(15, 15)
@@ -619,11 +619,11 @@ def numpy_to_pillow(fft_segments_T, img_size=64):
     Converts spectrogram from numpy array to pillow image
     
     Parameters:
-    fft_segments_T: numpy array of spectrogram (must be transposed)
-    img_size: size of output image
+    - fft_segments_T: numpy array of spectrogram (must be transposed)
+    - img_size: size of output image
 
     Returns:
-    img: pillow image
+    - img: pillow image
     """
     transformed = (fft_segments_T * 255 / np.max(fft_segments_T)).astype('uint8')
     img = Image.fromarray(transformed).transpose(Image.FLIP_TOP_BOTTOM).resize((img_size, img_size))
@@ -635,12 +635,12 @@ def spectrogram_samples_from_file(input_path, output_path, window_multiplier, nu
     Spectrogram pipeline for signal
 
     Parameters:
-    input_path: input file path
-    output_path: output file path
-    mode: spectrogram type ('manual' or 'scipy')
+    - input_path: input file path
+    - output_path: output file path
+    - mode: spectrogram type ('manual' or 'scipy')
 
     Returns:
-    spectrogram_samples: list of spectrogram samples
+    - spectrogram_samples: list of spectrogram samples
     """
     df = read_oscilloscope_data(
         file_path=input_path,
@@ -664,10 +664,10 @@ def plot_manual_fft_as_full_spectrogram(fft_segments, freqs, axis_labels=None, y
     Plots manual FFT segments as spectrogram
 
     Parameters:
-    fft_segments: numpy array of spectrogram
-    freqs: frequency bins
-    axis_labels: optional tuple (x_label, y_label) for x and y axis labels
-    ylim: frequencies axis upper limit
+    - fft_segments: numpy array of spectrogram
+    - freqs: frequency bins
+    - axis_labels: optional tuple (x_label, y_label) for x and y axis labels
+    - ylim: frequencies axis upper limit
     """  
     plt.figure(figsize=(15, 5))
     x_label, y_label = axis_labels if axis_labels else ('Time [segments]', 'Frequency [dB]')
@@ -684,9 +684,9 @@ def plot_full_scipy_spectrogram(noisy_signal, axis_labels=None, ylim=250):
     Plots scipy spectrogram from full signal
 
     Parameters:
-    noisy_signal: input signal before preprocessing
-    axis_labels: optional tuple (x_label, y_label) for x and y axis labels
-    ylim: frequencies axis upper limit
+    - noisy_signal: input signal before preprocessing
+    - axis_labels: optional tuple (x_label, y_label) for x and y axis labels
+    - ylim: frequencies axis upper limit
     """
     f, t, Sxx = spectrogram(noisy_signal, fs=10000, nperseg=10000, window='blackman', noverlap=20)
     plt.figure(figsize=(15, 5))
