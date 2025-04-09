@@ -9,11 +9,10 @@ Input Rate In kHz: 10.000000
 Input Time In Sec: 60.000000
 Decimation: 1
 Data Format: Calibr
-Time markers scale: секунды
+Time markers scale: seconds
 Segments: 1
 Data as Time Sequence:
                     Ch  2  
-                 Канал 2   
 
         0.000 ;     3.000
         0.000 ;     4.250
