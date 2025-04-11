@@ -1,7 +1,7 @@
 # Defective Motor Dataset – Load Variation Experiments
 
 ## Overview
-This repository contains time-series measurements (both current and vibration) collected from a set of identical motors operated under varying load conditions. The motors were not controlled by speed (which remains constant) – instead, load variations were introduced via generator parameter adjustments. Data were acquired on **03.10.2024** on the **Gray Stand**.
+This repository contains time-series measurements (both current and vibration) collected from a set of identical motors operated under varying load conditions. The motors were not controlled by speed (which remains constant) – instead, load variations were introduced via generator parameter adjustments. Data were acquired on **03.10.2024** on the **[Gray Stand](https://wiki.liman-tech.ru/s/e322948b-9045-4d05-99ae-bcb9f495a847)**.
 
 ## Motor Defects
 The dataset covers four motors with the following defect conditions:
@@ -52,8 +52,7 @@ experiment_1/current/4th_load_100
 
 ## Collection Details
 - **Collection Date:** 03.10.2024  
-- **Stand:** Gray Stand  
-  [Gray Stand Details](https://wiki.liman-tech.ru/s/e322948b-9045-4d05-99ae-bcb9f495a847)
+- **Stand:** [Gray Stand](https://wiki.liman-tech.ru/s/e322948b-9045-4d05-99ae-bcb9f495a847)  
 - **Data Format:** CSV
 
 ## Engine Configuration
