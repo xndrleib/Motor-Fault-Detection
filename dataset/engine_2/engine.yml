@@ -10,7 +10,7 @@ engine:
   bearings: "6204"               # Types of bearings used
 mcsa:
   f1: 50                         # Main supply frequency in Hertz (Hz)
-  f_sampling: 10000              # Sampling frequency in Hertz (Hz)
+  f_sampling: 4098               # Sampling frequency in Hertz (Hz)
   s: 0.073                       # Motor slip: 1500-1390/1500 = 0.073
   R_s:                           # Number of rotor bars (slots)
   p: 2                           # Number of pole pairs (f_r / f1)

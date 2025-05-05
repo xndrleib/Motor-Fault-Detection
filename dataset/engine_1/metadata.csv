@@ -1,0 +1,4 @@
+measurement_id,base_id,experiment,state,load_condition,phase,num_observations,file_path,engine_cfg_path
+7022023102148_1,7022023102148,experiment_3,normal,,1,10000,../dataset/engine_1/experiment_3/0702 без перекосов фаза A.txt,../dataset/engine_1/engine.yml
+7022023111156_1,7022023111156,experiment_3,inter-turn short circuits,,1,50000,../dataset/engine_1/experiment_3/0702  межвитковые фазы A ток фазы А.txt,../dataset/engine_1/engine.yml
+20012023124936_1,20012023124936,experiment_2,rotor bar defect,,1,100000,../dataset/engine_1/experiment_2/20_01_1460_об_мин_с_дисбалансом_ротора.txt,../dataset/engine_1/engine.yml

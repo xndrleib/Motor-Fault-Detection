@@ -22,20 +22,23 @@ class BaseAnomalyInjector(ABC):
         pass
 
 class GaussianPeakInjector(BaseAnomalyInjector):
-    def __init__(self, peak_segment=6, amplitude_range=(1.0, 5.0), sigma_range=(0.5, 1.5)):
+    def __init__(self, peak_segment=6, amplitude_range=(1.0, 5.0), sigma_range=(0.5, 1.5), negative=False, random_peak_position=False):
         """
         Parameters:
             peak_segment (int): Half-window size (in frequency bins) around each fault frequency.
             amplitude_range (tuple): Range for random peak amplitudes specific to Gaussian peaks.
             sigma_range (tuple): Range to randomly choose sigma for each injection.
+            negative (bool): If True, also randomly choose signs of Gaussian peaks.
+            random_peak_position (bool): If True, center of Gaussian peak is randomized within the injection window.
         """
         self.peak_segment = peak_segment
         self.amplitude_range = amplitude_range
         self.sigma_range = sigma_range
+        self.negative = negative
+        self.random_peak_position = random_peak_position
 
-    def _generate_gaussian_peak(self, length, amplitude, sigma):
+    def _generate_gaussian_peak(self, length, center, amplitude, sigma):
         x = np.arange(length)
-        center = length // 2
         profile = amplitude * np.exp(-((x - center) ** 2) / (2 * sigma ** 2))
         return profile
 
@@ -45,11 +48,24 @@ class GaussianPeakInjector(BaseAnomalyInjector):
             amp_val = random.uniform(*self.amplitude_range)
             sigma_val = random.uniform(*self.sigma_range)
             idx = np.argmin(np.abs(fft_freqs - freq))
+
             start_idx = max(0, idx - self.peak_segment)
             end_idx = min(len(modified_segment), idx + self.peak_segment + 1)
             window_length = end_idx - start_idx
-            profile = self._generate_gaussian_peak(window_length, amp_val, sigma_val)
+
+            # Determine peak center location
+            if self.random_peak_position:
+                center = random.randint(0, window_length - 1)
+            else:
+                center = window_length // 2
+
+            profile = self._generate_gaussian_peak(window_length, center, amp_val, sigma_val)
+
+            if self.negative:
+                profile *= random.choice([-1, 1])
+
             modified_segment[start_idx:end_idx] += profile
+
         return modified_segment
 
 class NoiseInjector(BaseAnomalyInjector):

@@ -64,6 +64,8 @@ Each experiment folder (e.g., `experiment_1`) includes an `experiment_info.yml` 
 ## Additional Notes
 - **Data Acquisition:**  
   The current and vibration measurements were not collected concurrently, even though they were obtained using the same equipment.
+- **Possible Problem with Phase 3:**
+  The very first value in the current time series for phase 3 is missing.
 - **Consistency Across Motors:**  
   While the motors are identical in design and configuration, each has been subjected to different defect conditions to study the impact under varying load levels.
 - **Usage:**  

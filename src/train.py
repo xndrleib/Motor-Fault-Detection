@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from tqdm.auto import tqdm
-
+import copy
+from src.utils import save_best
 
 def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
     """
@@ -11,7 +12,7 @@ def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
     - model: VAE model instance.
     - dataloader: DataLoader for training data.
     - optimizer: Optimizer instance.
-    - device: Device to run the training on ('cpu' or 'cuda').
+    - device: Device to run the training on.
     - num_epochs: Number of epochs to train.
     """
     model.to(device)
@@ -43,9 +44,11 @@ def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
     progress_bar.close()
     print(f'Final Average Loss: {average_loss:.4f}')
 
-def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=0.001):
+def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=1e-3, patience=15):
     """
     Trains the ResNet model with a progress bar and calls validation at the end.
+    - CosineAnnealingWarmRestarts scheduler
+    - Early stopping
     
     Parameters:
     -----------
@@ -59,26 +62,22 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
         Number of epochs to train.
     """
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=initial_lr, weight_decay=1e-4)
-
-    total_steps = len(train_loader) * num_epochs
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=initial_lr,
-        total_steps=total_steps,
-        pct_start=0.3,
-        anneal_strategy='cos'
-    )
+    optimizer = torch.optim.AdamW(model.parameters(),
+                                  lr=initial_lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2)
 
     best_val_acc = 0.0
-    best_model_state = None
+    best_state   = None
+    epochs_no_improve = 0
 
     # Training loop
-    for epoch in range(num_epochs):
+    for epoch in range(1, num_epochs + 1):
+        # ── Training ──
         model.train()
         running_loss = 0.0
 
-        with tqdm(total=len(train_loader), desc=f'Epoch {epoch+1}/{num_epochs}', unit='batch') as pbar:
+        with tqdm(total=len(train_loader), desc=f'Epoch {epoch}/{num_epochs}', unit='batch') as pbar:
             for inputs, labels in train_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
                 optimizer.zero_grad()
@@ -97,19 +96,19 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
                 pbar.set_postfix(loss=loss.item())
 
         epoch_loss = running_loss / len(train_loader.dataset)
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}')
+        print(f'Epoch [{epoch}/{num_epochs}], Loss: {epoch_loss:.4f}')
 
+        # ── Validation ──
         if val_loader is not None:
-            # Validation step
             model.eval()
             val_loss = 0.0
-            correct = 0
-            total = 0
+            correct = total = 0
             with torch.no_grad():
                 for inputs, labels in val_loader:
                     inputs, labels = inputs.to(device), labels.to(device)
                     outputs = model(inputs)
                     loss = criterion(outputs, labels)
+
                     val_loss += loss.item() * inputs.size(0)
                     _, predicted = torch.max(outputs, 1)
                     total += labels.size(0)
@@ -118,18 +117,30 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
             val_acc = correct / total
             print(f'Validation Loss: {avg_val_loss:.4f}, Accuracy: {val_acc*100:.2f}%')
 
-            # Save best model
+            # ── Check for improvement ──
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
-                best_model_state = model.state_dict()
-                print("Best model updated.")
+                best_state   = copy.deepcopy(model.state_dict())
+                epochs_no_improve = 0
 
-            # Load best model state
-        if best_model_state is not None:
-            model.load_state_dict(best_model_state)
+                num_classes = model.fc.out_features
+                save_best(model, epoch+1, best_val_acc,
+                          mode=("binary" if num_classes == 2 else "multiclass"),
+                          out_dir="../res/checkpoints")
+                print("→ New best model saved")
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f"→ Early stopping after {patience} epochs with no improvement.")
+                    break
 
+        # ── Scheduler step at end of epoch ──
+        scheduler.step()
+
+    # ── Load best model before returning ──
+    if best_state is not None:
+        model.load_state_dict(best_state)
     return model
-
 
 
 def vae_loss(x, x_decoded, mu, logvar, beta=1.0, smoothness_weight=0.0, delta=1.0):

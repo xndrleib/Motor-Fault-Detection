@@ -2,6 +2,28 @@ import numpy as np
 import shutil
 import os
 import random
+from pathlib import Path
+import torch
+
+
+def save_best(model, epoch, metric, mode, out_dir):
+    """
+    Persist best model.
+      • model … the nn.Module
+      • metric … the *higher-is-better* score (e.g. val-accuracy)
+      • mode … "binary" | "multiclass"
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = out_dir / f"resnet_best_{mode}.pth"
+
+    torch.save({
+        "epoch":  epoch,
+        "metric": metric,
+        "state":  model.state_dict(),
+    }, fname)
+
+    print(f"[✓]   New best ({mode}) saved →  {fname}  (metric={metric:.4f})")
 
 def dataloader_to_numpy(dataloader):
     """

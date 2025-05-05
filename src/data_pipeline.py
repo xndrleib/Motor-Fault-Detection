@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+import glob
 
 import random
 from src.electrical_signature_frequencies import ANOMALY_FREQS
@@ -676,4 +677,161 @@ def generate_synthetic_peaks(vae_model, num_samples, latent_dim, segment_mins, s
         denormalized_peaks.append(denormalized_segment)
 
     return np.array(denormalized_peaks)
+
+def create_metadata_df(base_dir: str, state2name: dict | None = None) -> pd.DataFrame:
+    """
+    Create a metadata DataFrame for measurement CSV files from the dataset.
     
+    This function searches for all CSV files in the following directory structure:
+    
+        base_dir/experiment_*/current/<load_condition>/<phase>/<file>.csv
+    
+    For each CSV file, it extracts the following metadata:
+        - experiment: The experiment folder name (e.g., 'experiment_1').
+        - load_folder: The load condition folder (e.g., '1st_load_80'). From this:
+            - state: Derived from the first part (e.g., '1' from '1st').
+            - load_condition: The last part (e.g., '80').
+        - phase: The motor phase folder (e.g., '1').
+        - measurement_id: The CSV filename without its extension + a phase number if provided.
+        - num_observations: Number of rows in the CSV (based on the first column).
+        - file_path: The full path to the CSV file, allowing for on-the-fly loading.
+    
+    The function returns a pandas DataFrame with one row per measurement. The
+    DataFrame is indexed by measurement_id.
+    
+    Parameters:
+        base_dir (str): Base directory where the experiment folders are located.
+        state_type2name (dict, optional): A mapping of states to their names. If provided,
+            it will be included in the metadata DataFrame.
+        
+    Returns:
+        pd.DataFrame: A DataFrame containing metadata for each measurement.
+    """
+    csv_pattern = os.path.join(base_dir, 'experiment_*', 'current', '*', '*', '*.csv')
+    csv_files = glob.glob(csv_pattern)
+
+    metadata_list = []
+
+    for file_path in csv_files:
+        # Expected structure: 
+        # base_dir/experiment_*/current/<load_condition>/<phase>/<filename>.csv
+        parts = file_path.split(os.sep)
+        try:
+            experiment = parts[-5]  # e.g., "experiment_1"
+            load_folder = parts[-3]  # e.g., "1st_load_80"
+            phase = parts[-2]        # e.g., "1"
+            base_id = os.path.splitext(os.path.basename(file_path))[0]
+            measurement_id = base_id + f'_{phase}'
+        except IndexError as e:
+            print(f"File path {file_path} does not match expected structure: {e}")
+            continue
+
+        # Parse the load_folder to extract state and load_condition.
+        try:
+            load_parts = load_folder.split('_')
+            if len(load_parts) >= 3:
+                state = load_parts[0][0]  # e.g., from "1st" take '1'
+                load_condition = load_parts[-1]  # e.g., "80"
+            else:
+                state = None
+                load_condition = load_folder
+        except Exception as e:
+            print(f"Error parsing load folder {load_folder} in file {file_path}: {e}")
+            state, load_condition = None, None
+
+        # Read the CSV file to count the number of observations.
+        try:
+            df = pd.read_csv(file_path, header=0, index_col=0)
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+            continue
+
+        # Drop any columns that are completely NaN (e.g., from trailing delimiters).
+        df = df.dropna(axis=1, how='all')
+
+        num_observations = df.shape[0]
+
+        if state2name is not None:
+            try:
+                state = state2name[int(state)]
+            except KeyError:
+                print(f"Fault type {state} not found in mapping.")
+                state = None
+
+        # Create the metadata entry.
+        meta_entry = {
+            'measurement_id': measurement_id,
+            'base_id': base_id,
+            'experiment': experiment,
+            'state': state,
+            'load_condition': load_condition,
+            'phase': phase,
+            'num_observations': num_observations,
+            'file_path': file_path,
+            'engine_cfg_path': f'../dataset/engine_2/engine.yml'
+        }
+        metadata_list.append(meta_entry)
+
+    if metadata_list:
+        metadata_df = pd.DataFrame(metadata_list)
+        metadata_df.set_index('measurement_id', inplace=True)
+    else:
+        metadata_df = pd.DataFrame(columns=[
+            'experiment',
+            'state',
+            'load_condition',
+            'phase',
+            'num_observations',
+            'file_path',
+            'engine_cfg_path'
+        ])
+
+    return metadata_df
+
+def load_measurement(measurement_id: str, metadata_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Load a specified measurement from its CSV file based on the metadata DataFrame.
+    
+    This function retrieves the file path for the given measurement_id from metadata_df,
+    then loads the CSV file located at that path. The CSV file is assumed to contain two
+    columns representing time and current (without a header). Extra columns (if any) are discarded.
+    
+    The returned DataFrame has a MultiIndex where:
+      - The first level is the measurement_id (repeated for all observations).
+      - The second level is a sequential observation index (obs_index).
+    
+    Parameters:
+        measurement_id (str): The unique identifier of the measurement to load.
+        metadata_df (pd.DataFrame): A DataFrame (indexed by measurement_id) containing at least
+                                    a 'file_path' column with the path to the CSV file.
+    
+    Returns:
+        pd.DataFrame: A DataFrame with columns ['Time', 'Current'] and a MultiIndex (measurement_id, obs_index).
+    
+    Raises:
+        KeyError: If the measurement_id is not found in the metadata DataFrame.
+        Exception: If there is an error in loading or processing the CSV file.
+    """
+    # Verify that the measurement_id exists in the metadata DataFrame.
+    if measurement_id not in metadata_df.index:
+        raise KeyError(f"Measurement {measurement_id} not found in metadata.")
+
+    # Retrieve the file path for the specified measurement.
+    file_path = metadata_df.loc[measurement_id, 'file_path']
+
+    try:
+        # Read the CSV file. The file is assumed to have no header.
+        df = pd.read_csv(file_path, header=0, index_col=0)
+    except Exception as e:
+        raise Exception(f"Error reading file {file_path}: {e}")
+
+    # Drop columns that are completely NaN (common if trailing delimiters exist).
+    df = df.dropna(axis=1, how='all')
+
+    # Rename columns to 'Time' and 'Current'.
+    df.columns = ['Time', 'Current']
+
+    # Set Index
+    df.set_index('Time', inplace=True) 
+    df.sort_index(inplace=True)
+    return df

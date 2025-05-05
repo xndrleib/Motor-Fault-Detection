@@ -963,10 +963,47 @@ pyrightconfig.json
 
 .conda/
 
-# Processed data
-data/processed/*
-!data/processed/.gitkeep
-
 res/*
 !res/.gitkeep
 cfg.yaml
+
+dataset/engine_1/freqs.npy 
+dataset/engine_1/segments_metadata.csv 
+dataset/engine_1/segments.npy
+
+dataset/engine_2/measurement_metrics_binary.csv 
+dataset/engine_2/measurement_metrics_multiclass.csv 
+dataset/engine_2/freqs.npy 
+dataset/engine_2/segments_metadata_test_binary_pred.csv 
+dataset/engine_2/segments_metadata_test_multiclass_pred.csv 
+dataset/engine_2/segments_metadata.csv
+
+
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  -25.txt 
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  -50.txt 
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  -75.txt 
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  -100.txt 
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  50.txt 
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  75.txt 
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  100 2.txt 
+dataset/engine_1/experiment_4/21 02 ­ £àă§ª  100.txt 
+dataset/engine_1/experiment_4/21 02 ¡¥§ �— ­ £àă§ª  0 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¡¥§ �— ­ £àă§ª  25 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¡¥§ �— ­ £àă§ª  50 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¡¥§ �— ­ £àă§ª  75 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¡¥§ �— ­ £àă§ª  100 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨á¡ « ­á ¬ ªá ®¡®à®âë 100%.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨á¡ « ­á 100 ¡¥§ �— ­ £àă§ª  25.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨á¡ « ­á 100 ¡¥§ �— ­ £àă§ª  50.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨á¡ « ­á 100 ¡¥§ �— ­ £àă§ª  75.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨á¡ « ­á 100 ¡¥§ �— ­ £àă§ª  100.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨áˇ « ­á ¬ Şá ®ˇĄ§ Ź—.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨áˇ « ­á 100 ˇĄ§ Ź— ­ Łŕă§Ş  0 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨áˇ « ­á 100 ˇĄ§ Ź— ­ Łŕă§Ş  25 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨áˇ « ­á 100 ˇĄ§ Ź— ­ Łŕă§Ş  50 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨áˇ « ­á 100 ˇĄ§ Ź— ­ Łŕă§Ş  75 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ¤¨áˇ « ­á 100 ˇĄ§ Ź— ­ Łŕă§Ş  100 5 ¬¨­ăâ.txt 
+dataset/engine_1/experiment_4/21 02 ē įā®ā­ØŖ 25 5 ¬Ø­ćā.txt 
+dataset/engine_1/experiment_4/21 02 ē įā®ā­ØŖ 50 5 ¬Ø­ćā.txt 
+dataset/engine_1/experiment_4/21 02 ē įā®ā­ØŖ 75 5 ¬Ø­ćā.txt 
+dataset/engine_1/experiment_4/21 02 ē įā®ā­ØŖ 100 5 ¬Ø­ćā.txt

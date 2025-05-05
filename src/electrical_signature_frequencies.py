@@ -118,12 +118,6 @@ def get_itsc_freqs(engine_config: Dict[str, float], k_range=range(1, 4, 2), m_ra
     -------
     List[float]
         Sorted list of computed ITSC-induced stator current harmonic frequencies.
-
-    Literature
-    -------
-    Henriques, K.; Laadjal, K.; Cardoso, A.J.M. 
-    Inter-Turn Short-Circuit Fault Detection in Synchronous Reluctance Machines, Based on Current Analysis. 
-    Eng. Proc. 2022, 24, 23. https://doi.org/10.3390/IECMA2022-12884
     """
     f1 = Decimal(str(engine_config['f1']))
     f_r = Decimal(str(engine_config['f_r']))
@@ -212,10 +206,20 @@ def get_bearing_freqs(engine_config: Dict[str, float], defect_type: str) -> List
     elif defect_type == 'inner_race':
         # BPFI formula
         freq = (n/Decimal('2'))*f_r*(Decimal('1') + factor)
+    elif defect_type == 'all':
+        # All frequencies
+        term = factor**Decimal('2')
+        bsf = (D_pit/(Decimal('2')*D_ball))*f_r*(Decimal('1') - term)
+        bpfo = (n/Decimal('2'))*f_r*(Decimal('1') - factor)
+        bpfh = (n/Decimal('2'))*f_r*(Decimal('1') + factor)
+        freq = [float(bsf), float(bpfo), float(bpfh)]
     else:
         raise ValueError("Invalid defect type. Must be 'outer_race', 'inner_race', or 'rolling_element'.")
     
-    return [float(freq)]
+    if defect_type == 'all':
+        return sorted(freq)
+    else:
+        return sorted([float(freq)])
 
 
 def get_mech_freqs(engine_config: Dict[str, float], n_range=range(1,4)) -> List[float]:
@@ -248,9 +252,10 @@ ANOMALY_FREQS = {
     'rotor bar defect': get_rotor_bar_freqs,
     'air-gap eccentricity': get_eccentricity_freqs,
     'inter-turn short circuits': get_itsc_freqs,
-    'bearing defect (rolling element)': lambda ec: get_bearing_freqs(ec, 'rolling_element'),
-    'bearing defect (outer race)': lambda ec: get_bearing_freqs(ec, 'outer_race'),
-    'bearing defect (inner race)': lambda ec: get_bearing_freqs(ec, 'inner_race'),
+    'bearing defect': lambda engine_config: get_bearing_freqs(engine_config, 'all'),
+    'bearing defect (rolling element)': lambda engine_config: get_bearing_freqs(engine_config, 'rolling_element'),
+    'bearing defect (outer race)': lambda engine_config: get_bearing_freqs(engine_config, 'outer_race'),
+    'bearing defect (inner race)': lambda engine_config: get_bearing_freqs(engine_config, 'inner_race'),
     'other mechanical defects': get_mech_freqs
 }
 

@@ -40,18 +40,14 @@ class ResidualBlock(nn.Module):
         
         # Pre-activation: first BN and ReLU on input
         out = F.relu(self.bn1(x))
-        # If downsampling is required, apply on the pre-activated input
-        if self.downsample is not None:
-            residual = self.downsample(out)
         out = self.conv1(out)
         out = F.relu(self.bn2(out))
         out = self.conv2(out)
 
+        if self.downsample is not None:
+            residual = self.downsample(residual)
         if self.use_se:
             out = self.se(out)
-
-        if self.downsample:
-            residual = self.downsample(x)
         
         out += residual
         out = F.relu(out)

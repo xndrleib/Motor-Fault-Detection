@@ -186,3 +186,76 @@ def plot_random_files_from_directory(directory, num_files=8):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_fault_freqs(ax, fault_freqs, state_name):
+    """
+    Plot the fault frequencies for a given state.
+    """
+    for f in fault_freqs[state_name]:
+        ax.axvline(f, color='r', linestyle='--')
+    return ax
+
+def plot_mean_std(mean_spec, std_spec, freqs, k=1, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(15, 8))
+        
+    # mean ± k*std
+    ax.plot(freqs, mean_spec)
+    ax.fill_between(
+        freqs,
+        mean_spec - k*std_spec,
+        mean_spec + k*std_spec,
+        alpha=0.2
+    )
+    ax.set_ylabel("Magnitude (dB)")
+    ax.set_xlabel("Frequency (Hz)")
+    return ax
+
+def filter_segments(seg_meta, states, loads, phases):
+    """
+    Filter segments based on state, load condition, and phase.
+    """
+    mask = (
+        (seg_meta['state'].isin(states)) &
+        (seg_meta['load_condition'].isin(loads)) &
+        (seg_meta['phase'].isin(phases))
+    )
+    return mask
+
+def plot_structural_deviations(segments, seg_meta, freqs, target_state, loads, phases, k_sigma=3, ax=None):
+    normal_segments_mask = filter_segments(
+        seg_meta,
+        states=["normal"],
+        loads=loads,
+        phases=phases)
+    normal_segments = segments[normal_segments_mask.values]
+
+    target_segments_mask = filter_segments(
+        seg_meta,
+        states=[target_state],
+        loads=loads,
+        phases=phases)
+    target_segments = segments[target_segments_mask.values]
+
+    mean1 = normal_segments.mean(axis=0)
+    mean2 = target_segments.mean(axis=0)
+    std1 = normal_segments.std(axis=0)
+    std2 = target_segments.std(axis=0)
+
+    if ax is None:
+        ax = plot_mean_std(
+            mean_spec=mean2 - mean1,
+            std_spec=std2 - std1,
+            freqs=freqs, 
+            k=k_sigma
+            )
+    else:
+        ax = plot_mean_std(
+            mean_spec=mean2 - mean1,
+            std_spec=std2 - std1,
+            freqs=freqs, 
+            k=k_sigma,
+            ax=ax
+            )
+    return ax

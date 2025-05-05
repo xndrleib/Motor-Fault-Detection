@@ -17,5 +17,6 @@ load_conditions:
     values: [0, 20, 40, 60, 80, 100]
   - label: "4th_load"
     values: [60, 80, 100]
+engine_cfg_path: '../engine.yml'
 defect: "Rotor cage break"
 notes: "Motor speed is constant; load variations are introduced via generator parameter adjustments. Data for current and vibration were acquired sequentially using the same equipment."
