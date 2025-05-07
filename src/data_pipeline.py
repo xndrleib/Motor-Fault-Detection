@@ -57,7 +57,7 @@ def segment_signal(signal, segment_length, step=None, overlap=None, apply_window
     - step: Number of samples to shift the window for each iteration (used for non-overlapping windows).
              If None, overlap is used instead.
     - overlap: Fraction of overlap between consecutive windows (0 to 1). Ignored if `step` is provided.
-    - apply_window: Whether to apply a Hann window to each segment.
+    - apply_window: Whether to apply a window to each segment.
 
     Returns:
     - numpy array of segmented windows.
@@ -142,6 +142,7 @@ def perform_fft_on_segments(segments, f_sampling, db=True, cutoff_freq=250):
     
     # Perform FFT for each segment
     for i in range(num_segments):
+        segments[i] -= segments[i].mean()  # Remove DC component
         yf, _ = time_to_freq_transform(segments[i], f_sampling, db=db, cutoff_freq=cutoff_freq)
         fft_segments[i, :] = yf
     

@@ -202,7 +202,7 @@ def train_resnet_epoch_cached(
 
     Returns
     -------
-    model  –  with the best‑validation weights loaded.
+    model  -  with the best-validation weights loaded.
     """
     criterion  = nn.CrossEntropyLoss()
     optimizer  = torch.optim.AdamW(model.parameters(),
@@ -252,7 +252,7 @@ def train_resnet_epoch_cached(
         train_loss = running_loss / total
         train_acc  = running_corr / total
         print(f'Epoch [{epoch}/{num_epochs}] '
-              f'train‑loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
+              f'train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
 
         # ── 3.  Validation phase ────────────────────────────────────────
         if val_loader is not None:
