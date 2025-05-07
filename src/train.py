@@ -178,3 +178,125 @@ def total_variation_loss(signal, weight=1e-3):
     diff = signal[:, :, 1:] - signal[:, :, :-1]
     tv = torch.mean(torch.abs(diff))
     return weight * tv
+
+
+def train_resnet_epoch_cached(
+    model: torch.nn.Module,
+    cached_dataset,
+    val_loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    num_epochs: int          = 20,
+    batch_size: int          = 512,
+    initial_lr: float        = 1e-3,
+    patience: int            = 15,
+    checkpoint_path: str | None = None,
+):
+    """
+    Train a ResNet on an EpochCachedDataset.
+
+    • `cached_dataset.refresh(epoch)` is called at the start of every epoch to
+      redraw which normal windows become synthetic faults, keeping labels
+      stable *within* the epoch.
+    • Early stopping and CosineAnnealingWarmRestarts are preserved.
+    • If `checkpoint_path` is given, the best weights are saved there.
+
+    Returns
+    -------
+    model  –  with the best‑validation weights loaded.
+    """
+    criterion  = nn.CrossEntropyLoss()
+    optimizer  = torch.optim.AdamW(model.parameters(),
+                                   lr=initial_lr, weight_decay=1e-4)
+    scheduler  = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2)
+
+    best_val_acc     = 0.0
+    best_state_dict  = None
+    epochs_no_improv = 0
+
+    for epoch in range(1, num_epochs + 1):
+        # ── 1.  Refresh synthetic map & build DataLoader ──────────────────
+        cached_dataset.refresh(epoch)
+        train_loader = torch.utils.data.DataLoader(
+            cached_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            generator=torch.Generator().manual_seed(epoch),
+        )
+
+        # ── 2.  Training phase ───────────────────────────────────────────
+        model.train()
+        running_loss = 0.0
+        running_corr = 0
+        total        = 0
+
+        with tqdm(total=len(train_loader),
+                  desc=f'Epoch {epoch}/{num_epochs}',
+                  unit='batch') as pbar:
+            for x, y in train_loader:
+                x, y = x.to(device), y.to(device)
+                optimizer.zero_grad()
+                out = model(x)
+                loss = criterion(out, y)
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+
+                running_loss += loss.item() * x.size(0)
+                _, preds      = out.max(1)
+                running_corr += (preds == y).sum().item()
+                total        += x.size(0)
+
+                pbar.update(1)
+                pbar.set_postfix(loss=loss.item())
+
+        train_loss = running_loss / total
+        train_acc  = running_corr / total
+        print(f'Epoch [{epoch}/{num_epochs}] '
+              f'train‑loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
+
+        # ── 3.  Validation phase ────────────────────────────────────────
+        if val_loader is not None:
+            model.eval()
+            val_loss_sum = 0.0
+            val_corr     = 0
+            val_total    = 0
+            with torch.no_grad():
+                for xv, yv in val_loader:
+                    xv, yv = xv.to(device), yv.to(device)
+                    outv   = model(xv)
+                    val_loss_sum += criterion(outv, yv).item() * xv.size(0)
+                    _, pv = outv.max(1)
+                    val_corr  += (pv == yv).sum().item()
+                    val_total += yv.size(0)
+
+            val_loss = val_loss_sum / val_total
+            val_acc  = val_corr / val_total
+            print(f'  → val‑loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
+
+            # ── checkpoint / early‑stopping ────────────────────────────
+            if val_acc > best_val_acc:
+                best_val_acc    = val_acc
+                best_state_dict = copy.deepcopy(model.state_dict())
+                epochs_no_improv = 0
+                if checkpoint_path:
+                    torch.save(best_state_dict, checkpoint_path)
+                    print(f'  [✓] best model saved → {checkpoint_path}')
+                else:
+                    num_classes = model.fc.out_features
+                    save_best(model, epoch, best_val_acc,
+                              mode=('binary' if num_classes == 2 else 'multiclass'),
+                              out_dir='../res/checkpoints')
+            else:
+                epochs_no_improv += 1
+                if epochs_no_improv >= patience:
+                    print(f'  → Early stopping (no improv ≥ {patience})')
+                    break
+
+        # ── scheduler step at end of epoch (2nd call keeps warm‑restart) ──
+        scheduler.step()
+
+    # ── load best weights before returning ────────────────────────────────
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+    return model
