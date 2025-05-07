@@ -240,7 +240,6 @@ def train_resnet_epoch_cached(
                 loss = criterion(out, y)
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
 
                 running_loss += loss.item() * x.size(0)
                 _, preds      = out.max(1)
@@ -293,7 +292,7 @@ def train_resnet_epoch_cached(
                     print(f'  → Early stopping (no improv ≥ {patience})')
                     break
 
-        # ── scheduler step at end of epoch (2nd call keeps warm‑restart) ──
+        # ── scheduler step at end of epoch ──
         scheduler.step()
 
     # ── load best weights before returning ────────────────────────────────
