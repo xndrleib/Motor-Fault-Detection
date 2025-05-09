@@ -536,7 +536,7 @@ def spectrogram_samples_using_scipy(noisy_signal, window_multiplier, num_samples
     return spectrogram_samples
 
 
-def spectrogram_samples_manual(noisy_signal, window_multiplier, num_samples):
+def spectrogram_samples_manual(noisy_signal, window_multiplier, num_samples, f_sampling=10000):
     """
     Returns spectrogram samples from input signal
 
@@ -548,13 +548,13 @@ def spectrogram_samples_manual(noisy_signal, window_multiplier, num_samples):
     Returns:
     - spectrogram_samples: list of manual spectrogram samples
     """
-    sample_len = 10000 * window_multiplier
+    sample_len = f_sampling * window_multiplier
     starts_indices = np.random.choice(len(noisy_signal)-sample_len, num_samples, replace=False)
     spectrogram_samples = []
     for idx in starts_indices:
         signal_sample = noisy_signal[idx:idx+sample_len]
-        segments = segment_signal(signal_sample, segment_length=10000, step=20, apply_window='blackman')
-        fft_segments, freqs = perform_fft_on_segments(segments, f_sampling=10000, db=True, cutoff_freq=250)
+        segments = segment_signal(signal_sample, segment_length=f_sampling, step=20, apply_window='blackman')
+        fft_segments, freqs = perform_fft_on_segments(segments, f_sampling=f_sampling, db=True, cutoff_freq=250)
         spectrogram_samples.append((idx, freqs, np.array(range(len(fft_segments))), fft_segments.T))
     return spectrogram_samples
 
@@ -679,7 +679,12 @@ def plot_manual_fft_as_full_spectrogram(fft_segments, freqs, axis_labels=None, y
     plt.show()
 
 
-def plot_full_scipy_spectrogram(noisy_signal, axis_labels=None, ylim=250):
+def plot_full_scipy_spectrogram(noisy_signal, 
+                                axis_labels=None, 
+                                fs=10000, 
+                                nperseg=10000, 
+                                window='blackman', 
+                                ylim=250):
     """
     Plots scipy spectrogram from full signal
 
@@ -688,7 +693,7 @@ def plot_full_scipy_spectrogram(noisy_signal, axis_labels=None, ylim=250):
     - axis_labels: optional tuple (x_label, y_label) for x and y axis labels
     - ylim: frequencies axis upper limit
     """
-    f, t, Sxx = spectrogram(noisy_signal, fs=10000, nperseg=10000, window='blackman', noverlap=20)
+    f, t, Sxx = spectrogram(noisy_signal, fs=fs, nperseg=nperseg, window=window, noverlap=20)
     plt.figure(figsize=(15, 5))
     x_label, y_label = axis_labels if axis_labels else ('Time [sec]', 'Frequency [dB]')
     plt.pcolormesh(t, f, np.log10(np.abs(Sxx)), shading='gouraud')
