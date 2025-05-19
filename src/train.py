@@ -44,11 +44,49 @@ def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
     progress_bar.close()
     print(f'Final Average Loss: {average_loss:.4f}')
 
-def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=1e-3, patience=15):
+
+def vae_loss(x, x_decoded, mu, logvar, beta=1.0, smoothness_weight=0.0, delta=1.0):
+    """
+    VAE loss using Huber (Smooth L1) for reconstruction + KL divergence + optional TV smoothing.
+    
+    Args:
+      x (Tensor): Original input of shape [B, 1, L].
+      x_decoded (Tensor): Model's reconstruction of shape [B, 1, L].
+      mu (Tensor): Mean vector from the encoder.
+      logvar (Tensor): Log variance from the encoder.
+      beta (float): Weight for the KL term (for beta-VAE).
+      smoothness_weight (float): If > 0, apply total variation penalty at that weight.
+      delta (float): Huber threshold (nn.SmoothL1Loss).
+    """
+    # 1) Huber (Smooth L1) reconstruction
+    huber_fn = nn.SmoothL1Loss(reduction='sum', beta=delta)
+    recon_loss = huber_fn(x_decoded, x) / x.size(0)
+
+    # 2) KL divergence
+    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
+
+    # 3) Optional total variation for smoothing
+    tv_loss = 0.0
+    if smoothness_weight > 0:
+        tv_loss = total_variation_loss(x_decoded, weight=smoothness_weight)
+
+    return recon_loss + beta * kl_loss + tv_loss
+
+def total_variation_loss(signal, weight=1e-3):
+    """
+    Encourages smoothness in the 1D output signal.
+    signal shape: [B, 1, L]
+    """
+    diff = signal[:, :, 1:] - signal[:, :, :-1]
+    tv = torch.mean(torch.abs(diff))
+    return weight * tv
+
+def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=1e-3, patience=15, checkpoint_path: str | None = None,):
     """
     Trains the ResNet model with a progress bar and calls validation at the end.
-    - CosineAnnealingWarmRestarts scheduler
-    - Early stopping
+    • CosineAnnealingWarmRestarts scheduler
+    • Early stopping
+    • If `checkpoint_path` is given, the best weights are saved there.
     
     Parameters:
     -----------
@@ -67,8 +105,8 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=10, T_mult=2)
 
-    best_val_acc = 0.0
-    best_state   = None
+    best_val_acc      = 0.0
+    best_state_dict   = None
     epochs_no_improve = 0
 
     # Training loop
@@ -117,68 +155,35 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
             val_acc = correct / total
             print(f'Validation Loss: {avg_val_loss:.4f}, Accuracy: {val_acc*100:.2f}%')
 
-            # ── Check for improvement ──
+            # ── checkpoint / early-stopping ────────────────────────────
             if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                best_state   = copy.deepcopy(model.state_dict())
+                best_val_acc    = val_acc
+                best_state_dict = copy.deepcopy(model.state_dict())
                 epochs_no_improve = 0
 
+                if checkpoint_path:
+                    check_path = checkpoint_path
+                else:
+                    check_path = '../res/checkpoints'
+
                 num_classes = model.fc.out_features
-                save_best(model, epoch+1, best_val_acc,
-                          mode=("binary" if num_classes == 2 else "multiclass"),
-                          out_dir="../res/checkpoints")
-                print("→ New best model saved")
+                save_best(model, epoch, best_val_acc,
+                            mode=('binary' if num_classes == 2 else 'multiclass'),
+                            out_dir=check_path)
+                print(f'  [✓] best model saved → {check_path}')
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= patience:
-                    print(f"→ Early stopping after {patience} epochs with no improvement.")
+                    print(f'  → Early stopping (no improve ≥ {patience})')
                     break
 
         # ── Scheduler step at end of epoch ──
         scheduler.step()
 
     # ── Load best model before returning ──
-    if best_state is not None:
-        model.load_state_dict(best_state)
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
     return model
-
-
-def vae_loss(x, x_decoded, mu, logvar, beta=1.0, smoothness_weight=0.0, delta=1.0):
-    """
-    VAE loss using Huber (Smooth L1) for reconstruction + KL divergence + optional TV smoothing.
-    
-    Args:
-      x (Tensor): Original input of shape [B, 1, L].
-      x_decoded (Tensor): Model's reconstruction of shape [B, 1, L].
-      mu (Tensor): Mean vector from the encoder.
-      logvar (Tensor): Log variance from the encoder.
-      beta (float): Weight for the KL term (for beta-VAE).
-      smoothness_weight (float): If > 0, apply total variation penalty at that weight.
-      delta (float): Huber threshold (nn.SmoothL1Loss).
-    """
-    # 1) Huber (Smooth L1) reconstruction
-    huber_fn = nn.SmoothL1Loss(reduction='sum', beta=delta)
-    recon_loss = huber_fn(x_decoded, x) / x.size(0)
-
-    # 2) KL divergence
-    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
-
-    # 3) Optional total variation for smoothing
-    tv_loss = 0.0
-    if smoothness_weight > 0:
-        tv_loss = total_variation_loss(x_decoded, weight=smoothness_weight)
-
-    return recon_loss + beta * kl_loss + tv_loss
-
-def total_variation_loss(signal, weight=1e-3):
-    """
-    Encourages smoothness in the 1D output signal.
-    signal shape: [B, 1, L]
-    """
-    diff = signal[:, :, 1:] - signal[:, :, :-1]
-    tv = torch.mean(torch.abs(diff))
-    return weight * tv
-
 
 def train_resnet_epoch_cached(
     model: torch.nn.Module,
@@ -210,9 +215,9 @@ def train_resnet_epoch_cached(
     scheduler  = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=10, T_mult=2)
 
-    best_val_acc     = 0.0
-    best_state_dict  = None
-    epochs_no_improv = 0
+    best_val_acc      = 0.0
+    best_state_dict   = None
+    epochs_no_improve = 0
 
     for epoch in range(1, num_epochs + 1):
         # ── 1.  Refresh synthetic map & build DataLoader ──────────────────
@@ -271,25 +276,28 @@ def train_resnet_epoch_cached(
 
             val_loss = val_loss_sum / val_total
             val_acc  = val_corr / val_total
-            print(f'  → val‑loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
+            print(f'  → val-loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
 
-            # ── checkpoint / early‑stopping ────────────────────────────
+            # ── checkpoint / early-stopping ────────────────────────────
             if val_acc > best_val_acc:
                 best_val_acc    = val_acc
                 best_state_dict = copy.deepcopy(model.state_dict())
-                epochs_no_improv = 0
+                epochs_no_improve = 0
+
                 if checkpoint_path:
-                    torch.save(best_state_dict, checkpoint_path)
-                    print(f'  [✓] best model saved → {checkpoint_path}')
+                    check_path = checkpoint_path
                 else:
-                    num_classes = model.fc.out_features
-                    save_best(model, epoch, best_val_acc,
-                              mode=('binary' if num_classes == 2 else 'multiclass'),
-                              out_dir='../res/checkpoints')
+                    check_path = '../res/checkpoints'
+
+                num_classes = model.fc.out_features
+                save_best(model, epoch, best_val_acc,
+                            mode=('binary' if num_classes == 2 else 'multiclass'),
+                            out_dir=check_path)
+                print(f'  [✓] best model saved → {check_path}')
             else:
-                epochs_no_improv += 1
-                if epochs_no_improv >= patience:
-                    print(f'  → Early stopping (no improv ≥ {patience})')
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f'  → Early stopping (no improve ≥ {patience})')
                     break
 
         # ── scheduler step at end of epoch ──

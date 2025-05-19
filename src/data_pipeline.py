@@ -80,7 +80,6 @@ def segment_signal(signal, segment_length, step=None, overlap=None, apply_window
 
     return np.array(segments)
 
-
 def time_to_freq_transform(data, f_sampling, db=True, cutoff_freq=None):
     """
     Transforms time-series data to frequency domain using FFT.
@@ -93,29 +92,31 @@ def time_to_freq_transform(data, f_sampling, db=True, cutoff_freq=None):
     - cutoff_freq: Optional cutoff frequency to filter the results.
     
     Returns:
-    - yf: Transformed frequency domain values.
+    - yf: Transformed frequency domain magnitude values.
     - freqs: Frequency bins.
     """
     if data.ndim != 1:
         raise ValueError(f"Input data must be a 1D NumPy array. Got shape {data.shape}.")
     
-    n = data.shape[0]  # Number of samples
-    yf = np.fft.rfft(data)  # Perform FFT
+    n     = data.shape[0]  # Number of samples
+    yf    = np.fft.rfft(data)  # Perform FFT
     freqs = np.fft.rfftfreq(n, d=1/f_sampling)  # Frequency bins
+
+    if cutoff_freq is not None:
+        mask  = freqs < cutoff_freq  # Apply cutoff filter
+        yf    = yf[mask]
+        freqs = freqs[mask]
+    
+    yf = np.abs(yf)  # Get magnitude
     
     if db:
-        epsilon = 1e-12  # Small constant to avoid log10(0)
-        yf = 20 * np.log10(np.abs(yf) + epsilon)  # Convert to dB scale
-    
-    if cutoff_freq is not None:
-        mask = freqs < cutoff_freq  # Apply cutoff filter
-        yf = yf[mask]
-        freqs = freqs[mask]
+        eps = np.finfo(float).eps     # Machine epsilon
+        yf = 20 * np.log10(yf + eps)  # Convert to dB scale
     
     return yf, freqs
 
 
-def perform_fft_on_segments(segments, f_sampling, db=True, cutoff_freq=250):
+def perform_fft_on_segments(segments, f_sampling, db=True, cutoff_freq=250, remove_dc=False):
     """
     Perform FFT on each segment in the provided array and return the transformed data.
     
@@ -124,13 +125,18 @@ def perform_fft_on_segments(segments, f_sampling, db=True, cutoff_freq=250):
     - f_sampling: Sampling frequency of the data.
     - db: Boolean flag to convert FFT values to decibel scale.
     - cutoff_freq: Frequency cutoff for filtering FFT results.
+    - remove_dc: Boolean flag to remove DC component from each segment.
     
     Returns:
     - fft_segments: 2D NumPy array where each row is the FFT-transformed data of a segment.
     - freqs: Frequency bins (shared across all segments).
     """
-    num_segments = segments.shape[0]
-    segment_length = segments.shape[1]
+    segs = segments.copy()
+
+    if remove_dc:
+        segs -= segs.mean(axis=1, keepdims=True)
+
+    num_segments, segment_length = segs.shape
     
     # Determine the length of FFT output
     full_freqs = np.fft.rfftfreq(segment_length, d=1 / f_sampling)
@@ -138,14 +144,10 @@ def perform_fft_on_segments(segments, f_sampling, db=True, cutoff_freq=250):
     fft_output_length = np.sum(cutoff_mask)
     
     fft_segments = np.zeros((num_segments, fft_output_length))
-    freqs = full_freqs[cutoff_mask]
     
     # Perform FFT for each segment
     for i in range(num_segments):
-        segments[i] -= segments[i].mean()  # Remove DC component
-        yf, _ = time_to_freq_transform(segments[i], f_sampling, db=db, cutoff_freq=cutoff_freq)
-        fft_segments[i, :] = yf
-    
+        fft_segments[i], freqs = time_to_freq_transform(segments[i], f_sampling, db=db, cutoff_freq=cutoff_freq)
     return fft_segments, freqs
 
 

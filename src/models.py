@@ -16,6 +16,71 @@ class SEBlock(nn.Module):
         s = torch.sigmoid(self.fc2(s))
         s = s.unsqueeze(-1)  # reshape to [B, C, 1] for channel-wise scaling
         return x * s
+    
+class BandWeightAttention(nn.Module):
+    """
+    x · w,  with  w = w_out·(1-mask) + w_in·mask
+
+    Parameters
+    ----------
+    mask : (1,1,L) float tensor with 1 inside diagnostic bands, 0 elsewhere.
+    w_in_init  : start value (≥1)  for inside‑band weight
+    w_out_init : start value (≤1)  for outside‑band weight (can be 0)
+    learnable_in / learnable_out : whether each scalar is trainable.
+    """
+    def __init__(self,
+                 mask: torch.Tensor,
+                 w_in_init: float  = 1.0,
+                 w_out_init: float = 0.2,
+                 learnable_in: bool  = True,
+                 learnable_out: bool = True):
+        super().__init__()
+        self.register_buffer("mask", mask)
+
+        # ----- OUTSIDE weight ---------------------------------------------------
+        if learnable_out:
+            # softplus‑param ⇒ always ≥0
+            init = torch.log(torch.tensor(w_out_init + 1e-6))
+            self.log_out = nn.Parameter(init)
+        else:
+            self.register_buffer("log_out",
+                                 torch.log(torch.tensor(w_out_init + 1e-6)),
+                                 persistent=False)        # fixed scalar
+
+        # ----- INSIDE weight ----------------------------------------------------
+        if learnable_in:
+            # inside weight ≥1 : parameterise w_in-1 with softplus
+            init = torch.log(torch.tensor(w_in_init - 1.0 + 1e-6))
+            self.log_in  = nn.Parameter(init)
+        else:
+            self.register_buffer("log_in",
+                                 torch.log(torch.tensor(w_in_init - 1.0 + 1e-6)),
+                                 persistent=False)
+
+    # -----------------------------------------------------------------------
+    def _weights(self):
+        w_out = F.softplus(self.log_out)          # ≥0
+        w_in  = 1.0 + F.softplus(self.log_in)     # ≥1
+        return w_in, w_out
+    
+    def forward(self, x):                                    # x: (B,C,L)
+        w_in, w_out = self._weights()
+        weight = w_out + (w_in - w_out) * self.mask          # broadcast
+        return x * weight
+    
+class SpectralPriorAttention(nn.Module):
+    """
+    Multiplies feature maps by (1 + gain * mask) where `mask` is a fixed
+    (1,1,L) tensor with 0/1 or smoothed values. `gain` is learnable so the
+    network can down-weight or up-weight the prior during training.
+    """
+    def __init__(self, mask: torch.Tensor, init_gain: float = 2.0):
+        super().__init__()
+        self.register_buffer("mask", mask)            # shape (1,1,L)
+        self.gain = nn.Parameter(torch.full((1,), init_gain))
+
+    def forward(self, x):                              # x: (B,C,L)
+        return x * (1.0 + self.gain * self.mask)
 
 class ResidualBlock(nn.Module):
     """
@@ -52,27 +117,32 @@ class ResidualBlock(nn.Module):
         out += residual
         out = F.relu(out)
         return out
-
+    
 class ResNet(nn.Module):
-    """
-    Definition of the ResNet model for time-series classification.
-    """
-    def __init__(self, block, layers, num_classes=2, dropout_rate=0.5, block_kwargs=None):
-        super(ResNet, self).__init__()
+    def __init__(self, block, layers, num_classes=2,
+                 dropout_rate=0.5, block_kwargs=None, 
+                 prior_kwargs: dict | None = None,
+                 init_gain: float = 2.0):
+        super().__init__()
         if block_kwargs is None:
             block_kwargs = {}
 
         self.in_channels = 64
         self.dropout_rate = dropout_rate
         self.conv = nn.Conv1d(1, 64, kernel_size=7, stride=2, padding=3)
-        self.bn = nn.BatchNorm1d(64)
-        self.layer1 = self.make_layer(block, 64, layers[0], stride=1, **block_kwargs)
+        self.bn   = nn.BatchNorm1d(64)
+
+        if prior_kwargs is not None:
+            self.prior_attn = BandWeightAttention(**prior_kwargs)
+        else:
+            self.prior_attn = nn.Identity()
+
+        self.layer1 = self.make_layer(block, 64,  layers[0], stride=1, **block_kwargs)
         self.layer2 = self.make_layer(block, 128, layers[1], stride=2, **block_kwargs)
         self.layer3 = self.make_layer(block, 256, layers[2], stride=2, **block_kwargs)
         self.layer4 = self.make_layer(block, 512, layers[3], stride=2, **block_kwargs)
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(512, num_classes)
-
         self._initialize_weights()
 
     def make_layer(self, block, out_channels, blocks, stride=1, **block_kwargs):
@@ -89,18 +159,6 @@ class ResNet(nn.Module):
             layers.append(block(out_channels, out_channels, **block_kwargs))
         return nn.Sequential(*layers)
 
-    def forward(self, x):
-        out = F.relu(self.bn(self.conv(x)))
-        out = self.layer1(out)
-        out = self.layer2(out)
-        out = self.layer3(out)
-        out = self.layer4(out)
-        out = self.avg_pool(out)
-        out = out.squeeze(-1)
-        out = F.dropout(out, p=self.dropout_rate, training=self.training)
-        out = self.fc(out)
-        return out
-
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
@@ -113,6 +171,17 @@ class ResNet(nn.Module):
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        out = self.prior_attn(x)
+        out = F.relu(self.bn(self.conv(out)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avg_pool(out).squeeze(-1)
+        out = F.dropout(out, p=self.dropout_rate, training=self.training)
+        return self.fc(out)
 
 class VAE(nn.Module):
     """
