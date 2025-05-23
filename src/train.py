@@ -1,11 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from sklearn.metrics import precision_recall_fscore_support
-import numpy as np
-from src.models import vae_loss
 from tqdm.auto import tqdm
-
+import copy
+from src.utils import save_best
 
 def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
     """
@@ -15,7 +12,7 @@ def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
     - model: VAE model instance.
     - dataloader: DataLoader for training data.
     - optimizer: Optimizer instance.
-    - device: Device to run the training on ('cpu' or 'cuda').
+    - device: Device to run the training on.
     - num_epochs: Number of epochs to train.
     """
     model.to(device)
@@ -48,118 +45,265 @@ def train_vae(model, dataloader, optimizer, device='cpu', num_epochs=20):
     print(f'Final Average Loss: {average_loss:.4f}')
 
 
-def generate_synthetic_peaks(vae_model, num_samples, latent_dim, segment_mins, segment_maxs):
+def vae_loss(x, x_decoded, mu, logvar, beta=1.0, smoothness_weight=0.0, delta=1.0):
     """
-    Generate synthetic peak segments using the trained VAE.
+    VAE loss using Huber (Smooth L1) for reconstruction + KL divergence + optional TV smoothing.
+    
+    Args:
+      x (Tensor): Original input of shape [B, 1, L].
+      x_decoded (Tensor): Model's reconstruction of shape [B, 1, L].
+      mu (Tensor): Mean vector from the encoder.
+      logvar (Tensor): Log variance from the encoder.
+      beta (float): Weight for the KL term (for beta-VAE).
+      smoothness_weight (float): If > 0, apply total variation penalty at that weight.
+      delta (float): Huber threshold (nn.SmoothL1Loss).
     """
-    vae_model.eval()
-    device = next(vae_model.parameters()).device
+    # 1) Huber (Smooth L1) reconstruction
+    huber_fn = nn.SmoothL1Loss(reduction='sum', beta=delta)
+    recon_loss = huber_fn(x_decoded, x) / x.size(0)
 
-    with torch.no_grad():
-        z = torch.randn(num_samples, latent_dim).to(device)
-        x_decoded_input = vae_model.decoder_input(z)
-        generated = vae_model.decoder(x_decoded_input)
-        generated = generated.cpu().numpy()
-        generated = generated.squeeze(1)  # Remove channel dimension
+    # 2) KL divergence
+    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
 
-    denormalized_peaks = []
-    for i, segment in enumerate(generated):
-        min_val = segment_mins[i % len(segment_mins)]
-        max_val = segment_maxs[i % len(segment_maxs)]
-        denormalized_segment = segment * (max_val - min_val + 1e-8) + min_val
-        denormalized_peaks.append(denormalized_segment)
+    # 3) Optional total variation for smoothing
+    tv_loss = 0.0
+    if smoothness_weight > 0:
+        tv_loss = total_variation_loss(x_decoded, weight=smoothness_weight)
 
-    return np.array(denormalized_peaks)
+    return recon_loss + beta * kl_loss + tv_loss
 
-def train_resnet_model(model, train_loader, test_loader, device, num_epochs=10):
+def total_variation_loss(signal, weight=1e-3):
     """
-    Trains and evaluates the ResNet model with progress tracking using tqdm.
+    Encourages smoothness in the 1D output signal.
+    signal shape: [B, 1, L]
+    """
+    diff = signal[:, :, 1:] - signal[:, :, :-1]
+    tv = torch.mean(torch.abs(diff))
+    return weight * tv
 
+def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=1e-3, patience=15, checkpoint_path: str | None = None,):
+    """
+    Trains the ResNet model with a progress bar and calls validation at the end.
+    • CosineAnnealingWarmRestarts scheduler
+    • Early stopping
+    • If `checkpoint_path` is given, the best weights are saved there.
+    
     Parameters:
-    - model: ResNet model instance.
-    - train_loader: DataLoader for training data.
-    - test_loader: DataLoader for testing data.
-    - device: Device to run the training on.
-    - num_epochs: Number of epochs to train.
+    -----------
+    model : nn.Module
+        The ResNet model to train.
+    train_loader : DataLoader
+        DataLoader for the training set.
+    device : torch.device
+        Device to run the training on ('cpu', 'cuda', etc.).
+    num_epochs : int
+        Number of epochs to train.
     """
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.AdamW(model.parameters(),
+                                  lr=initial_lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2)
 
-    # Training loop with tqdm
-    for epoch in range(num_epochs):
+    best_val_acc      = 0.0
+    best_state_dict   = None
+    epochs_no_improve = 0
+
+    # Training loop
+    for epoch in range(1, num_epochs + 1):
+        # ── Training ──
         model.train()
         running_loss = 0.0
 
-        # Initialize tqdm for batch progress
-        with tqdm(total=len(train_loader), desc=f'Epoch {epoch+1}/{num_epochs}', unit='batch') as pbar:
+        with tqdm(total=len(train_loader), desc=f'Epoch {epoch}/{num_epochs}', unit='batch') as pbar:
             for inputs, labels in train_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
+                optimizer.zero_grad()
 
                 # Forward pass
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
 
-                # Backward and optimize
-                optimizer.zero_grad()
+                # Backward pass and optimize
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
 
                 running_loss += loss.item() * inputs.size(0)
                 pbar.update(1)
                 pbar.set_postfix(loss=loss.item())
 
         epoch_loss = running_loss / len(train_loader.dataset)
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}')
+        print(f'Epoch [{epoch}/{num_epochs}], Loss: {epoch_loss:.4f}')
 
-    # Evaluation
-    model.eval()
-    correct = 0
-    total = 0
-    all_labels = []
-    all_predictions = []
+        # ── Validation ──
+        if val_loader is not None:
+            model.eval()
+            val_loss = 0.0
+            correct = total = 0
+            with torch.no_grad():
+                for inputs, labels in val_loader:
+                    inputs, labels = inputs.to(device), labels.to(device)
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
 
-    with torch.no_grad():
-        for inputs, labels in tqdm(test_loader, desc='Evaluating', unit='batch'):
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs.data, 1)
+                    val_loss += loss.item() * inputs.size(0)
+                    _, predicted = torch.max(outputs, 1)
+                    total += labels.size(0)
+                    correct += (predicted == labels).sum().item()
+            avg_val_loss = val_loss / len(val_loader.dataset)
+            val_acc = correct / total
+            print(f'Validation Loss: {avg_val_loss:.4f}, Accuracy: {val_acc*100:.2f}%')
 
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-            all_labels.extend(labels.cpu().numpy())
-            all_predictions.extend(predicted.cpu().numpy())
+            # ── checkpoint / early-stopping ────────────────────────────
+            if val_acc > best_val_acc:
+                best_val_acc    = val_acc
+                best_state_dict = copy.deepcopy(model.state_dict())
+                epochs_no_improve = 0
 
-    accuracy = 100 * correct / total
-    print(f'Accuracy of the model on the test set: {accuracy:.2f}%')
+                if checkpoint_path:
+                    check_path = checkpoint_path
+                else:
+                    check_path = '../res/checkpoints'
 
-    precision, recall, f1_score, _ = precision_recall_fscore_support(
-        all_labels, all_predictions, average='weighted')
-    print(f'F1 Score: {f1_score:.4f}')
+                num_classes = model.fc.out_features
+                save_best(model, epoch, best_val_acc,
+                            mode=('binary' if num_classes == 2 else 'multiclass'),
+                            out_dir=check_path)
+                print(f'  [✓] best model saved → {check_path}')
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f'  → Early stopping (no improve ≥ {patience})')
+                    break
 
+        # ── Scheduler step at end of epoch ──
+        scheduler.step()
 
-def compute_mse(original_segment, denoised_segment):
+    # ── Load best model before returning ──
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+    return model
+
+def train_resnet_epoch_cached(
+    model: torch.nn.Module,
+    cached_dataset,
+    val_loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    num_epochs: int          = 20,
+    batch_size: int          = 512,
+    initial_lr: float        = 1e-3,
+    patience: int            = 15,
+    checkpoint_path: str | None = None,
+):
     """
-    Computes Mean Squared Error (MSE) between original and denoised segments.
-    """
-    return np.mean((original_segment - denoised_segment) ** 2)
+    Train a ResNet on an EpochCachedDataset.
 
-def compute_snr(original_segment, denoised_segment):
-    """
-    Computes the Signal-to-Noise Ratio (SNR) in dB for one segment.
-    SNR = 20 * log10(||original|| / ||original - denoised||).
-    """
-    numerator = np.linalg.norm(original_segment)
-    denominator = np.linalg.norm(original_segment - denoised_segment) + 1e-12
-    return 20 * np.log10(numerator / denominator)
+    • `cached_dataset.refresh(epoch)` is called at the start of every epoch to
+      redraw which normal windows become synthetic faults, keeping labels
+      stable *within* the epoch.
+    • Early stopping and CosineAnnealingWarmRestarts are preserved.
+    • If `checkpoint_path` is given, the best weights are saved there.
 
-def compute_metrics(original_segments, denoised_segments):
+    Returns
+    -------
+    model  -  with the best-validation weights loaded.
     """
-    Computes the average MSE and average SNR across all segments.
-    Returns (avg_mse, avg_snr).
-    """
-    mses = []
-    snrs = []
-    for orig_seg, den_seg in zip(original_segments, denoised_segments):
-        mses.append(compute_mse(orig_seg, den_seg))
-        snrs.append(compute_snr(orig_seg, den_seg))
-    return np.mean(mses), np.mean(snrs)
+    criterion  = nn.CrossEntropyLoss()
+    optimizer  = torch.optim.AdamW(model.parameters(),
+                                   lr=initial_lr, weight_decay=1e-4)
+    scheduler  = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2)
+
+    best_val_acc      = 0.0
+    best_state_dict   = None
+    epochs_no_improve = 0
+
+    for epoch in range(1, num_epochs + 1):
+        # ── 1.  Refresh synthetic map & build DataLoader ──────────────────
+        cached_dataset.refresh(epoch)
+        train_loader = torch.utils.data.DataLoader(
+            cached_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            generator=torch.Generator().manual_seed(epoch),
+        )
+
+        # ── 2.  Training phase ───────────────────────────────────────────
+        model.train()
+        running_loss = 0.0
+        running_corr = 0
+        total        = 0
+
+        with tqdm(total=len(train_loader),
+                  desc=f'Epoch {epoch}/{num_epochs}',
+                  unit='batch') as pbar:
+            for x, y in train_loader:
+                x, y = x.to(device), y.to(device)
+                optimizer.zero_grad()
+                out = model(x)
+                loss = criterion(out, y)
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item() * x.size(0)
+                _, preds      = out.max(1)
+                running_corr += (preds == y).sum().item()
+                total        += x.size(0)
+
+                pbar.update(1)
+                pbar.set_postfix(loss=loss.item())
+
+        train_loss = running_loss / total
+        train_acc  = running_corr / total
+        print(f'Epoch [{epoch}/{num_epochs}] '
+              f'train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
+
+        # ── 3.  Validation phase ────────────────────────────────────────
+        if val_loader is not None:
+            model.eval()
+            val_loss_sum = 0.0
+            val_corr     = 0
+            val_total    = 0
+            with torch.no_grad():
+                for xv, yv in val_loader:
+                    xv, yv = xv.to(device), yv.to(device)
+                    outv   = model(xv)
+                    val_loss_sum += criterion(outv, yv).item() * xv.size(0)
+                    _, pv = outv.max(1)
+                    val_corr  += (pv == yv).sum().item()
+                    val_total += yv.size(0)
+
+            val_loss = val_loss_sum / val_total
+            val_acc  = val_corr / val_total
+            print(f'  → val-loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
+
+            # ── checkpoint / early-stopping ────────────────────────────
+            if val_acc > best_val_acc:
+                best_val_acc    = val_acc
+                best_state_dict = copy.deepcopy(model.state_dict())
+                epochs_no_improve = 0
+
+                if checkpoint_path:
+                    check_path = checkpoint_path
+                else:
+                    check_path = '../res/checkpoints'
+
+                num_classes = model.fc.out_features
+                save_best(model, epoch, best_val_acc,
+                            mode=('binary' if num_classes == 2 else 'multiclass'),
+                            out_dir=check_path)
+                print(f'  [✓] best model saved → {check_path}')
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f'  → Early stopping (no improve ≥ {patience})')
+                    break
+
+        # ── scheduler step at end of epoch ──
+        scheduler.step()
+
+    # ── load best weights before returning ────────────────────────────────
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+    return model
