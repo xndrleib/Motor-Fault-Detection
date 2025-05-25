@@ -3,7 +3,11 @@ import torch.nn as nn
 from tqdm.auto import tqdm
 import copy
 from src.utils import save_best
+from pathlib import Path
+import pandas as pd
 
+import logging
+logger = logging.getLogger(__name__)
 
 def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=1e-3, patience=15, checkpoint_path: str | None = None,):
     """
@@ -114,37 +118,44 @@ def train_resnet_epoch_cached(
     cached_dataset,
     val_loader: torch.utils.data.DataLoader,
     device: torch.device,
-    num_epochs: int          = 20,
-    batch_size: int          = 512,
-    initial_lr: float        = 1e-3,
-    patience: int            = 15,
-    checkpoint_path: str | None = None,
+    num_epochs: int           = 20,
+    batch_size: int           = 512,
+    initial_lr: float         = 1e-3,
+    patience: int             = 15,
+    checkpoint_path: str | None      = None,
+    history_path: str | Path | None  = None,
 ):
     """
     Train a ResNet on an EpochCachedDataset.
 
     • `cached_dataset.refresh(epoch)` is called at the start of every epoch to
-      redraw which normal windows become synthetic faults, keeping labels
-      stable *within* the epoch.
+      redraw which normal windows become synthetic faults, keeping labels stable *within* the epoch.
     • Early stopping and CosineAnnealingWarmRestarts are preserved.
     • If `checkpoint_path` is given, the best weights are saved there.
+    • If `history_path` is provided, a CSV with columns [train_loss, val_loss] is written at the end.
 
     Returns
     -------
     model  -  with the best-validation weights loaded.
     """
+    # Loss and optimizer setup
     criterion  = nn.CrossEntropyLoss()
     optimizer  = torch.optim.AdamW(model.parameters(),
                                    lr=initial_lr, weight_decay=1e-4)
     scheduler  = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=10, T_mult=2)
 
+    # History containers
+    train_losses = []
+    val_losses   = []
+    epochs       = []
+
     best_val_acc      = 0.0
     best_state_dict   = None
     epochs_no_improve = 0
 
     for epoch in range(1, num_epochs + 1):
-        # ── 1.  Refresh synthetic map & build DataLoader ──────────────────
+        # ── 1.  Refresh synthetic map & build DataLoader ─────────────
         cached_dataset.refresh(epoch)
         train_loader = torch.utils.data.DataLoader(
             cached_dataset,
@@ -153,8 +164,9 @@ def train_resnet_epoch_cached(
             generator=torch.Generator().manual_seed(epoch),
         )
 
-        # ── 2.  Training phase ───────────────────────────────────────────
+        # ── 2.  Training phase ───────────────────────────────────
         model.train()
+        epochs.append(epoch)
         running_loss = 0.0
         running_corr = 0
         total        = 0
@@ -180,10 +192,13 @@ def train_resnet_epoch_cached(
 
         train_loss = running_loss / total
         train_acc  = running_corr / total
-        print(f'Epoch [{epoch}/{num_epochs}] '
-              f'train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
+        train_losses.append(train_loss)
+        logger.info(f'Epoch [{epoch}/{num_epochs}] '
+                    f'train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
+        # print(f'Epoch [{epoch}/{num_epochs}] '
+        #       f'train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
 
-        # ── 3.  Validation phase ────────────────────────────────────────
+        # ── 3.  Validation phase ─────────────────────────────────
         if val_loader is not None:
             model.eval()
             val_loss_sum = 0.0
@@ -200,9 +215,11 @@ def train_resnet_epoch_cached(
 
             val_loss = val_loss_sum / val_total
             val_acc  = val_corr / val_total
-            print(f'  → val-loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
+            val_losses.append(val_loss)
+            logger.info(f'  → val-loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
+            # print(f'  → val-loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
 
-            # ── checkpoint / early-stopping ────────────────────────────
+            # ── checkpoint / early-stopping ──────────────────────
             if val_acc > best_val_acc:
                 best_val_acc    = val_acc
                 best_state_dict = copy.deepcopy(model.state_dict())
@@ -215,19 +232,36 @@ def train_resnet_epoch_cached(
 
                 num_classes = model.fc.out_features
                 save_best(model, epoch, best_val_acc,
-                            mode=('binary' if num_classes == 2 else 'multiclass'),
-                            out_dir=check_path)
-                print(f'  [✓] best model saved → {check_path}')
+                          mode=('binary' if num_classes == 2 else 'multiclass'),
+                          out_dir=check_path)
+                logger.info(f'  [✓] best model saved → {check_path}')
+                # print(f'  [✓] best model saved → {check_path}')
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= patience:
-                    print(f'  → Early stopping (no improve ≥ {patience})')
+                    logger.info(f'  → Early stopping (no improve ≥ {patience})')
+                    # print(f'  → Early stopping (no improve ≥ {patience})')
                     break
+        else:
+            # No validation loader: record placeholder
+            val_losses.append(None)
 
-        # ── scheduler step at end of epoch ──
+        # ── scheduler step at end of epoch ─────────────────────
         scheduler.step()
 
-    # ── load best weights before returning ────────────────────────────────
+    # ── save loss history if requested ───────────────────────────
+    if history_path:
+        history_path = Path(history_path)
+        df = pd.DataFrame({
+            'epoch': epochs,
+            'train_loss': train_losses,
+            'val_loss':   val_losses,
+        })
+        df.to_csv(history_path, index=False)
+        logger.info(f"Saved training history to {history_path}")
+        # print(f"Saved training history to {history_path}")
+
+    # ── load best weights before returning ────────────────────────
     if best_state_dict is not None:
         model.load_state_dict(best_state_dict)
     return model

@@ -1,6 +1,6 @@
 import numpy as np
-from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
-
+import pandas as pd
+from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 
 def compute_mse(original_segment, denoised_segment):
     """
@@ -50,3 +50,33 @@ def calculate_metrics(true_labels, predictions):
     precision, recall, f1_score, _ = precision_recall_fscore_support(true_labels, predictions, average='weighted')
     return cm, accuracy, precision, recall, f1_score
 
+def slice_metrics(df: pd.DataFrame,
+                  y_true: str,
+                  y_pred: str,
+                  average: str = "binary") -> pd.DataFrame:
+    """
+    Return accuracy, precision, recall, F1 **and n** for every
+    (phase, load_condition) slice.
+    """
+    records = []
+    for (phase, load), g in df.groupby(["phase", "load_condition"]):
+        n   = len(g)
+        acc = accuracy_score(g[y_true], g[y_pred])
+        prc, rec, f1, _ = precision_recall_fscore_support(
+            g[y_true], g[y_pred],
+            average=average,
+            zero_division=0,
+        )
+        records.append({
+            "phase":      phase,
+            "load":       load,
+            "n":          n,           
+            "accuracy":   acc,
+            "precision":  prc,
+            "recall":     rec,
+            "f1":         f1,
+        })
+    return (
+        pd.DataFrame.from_records(records)
+        .sort_values(["load", "phase"], ignore_index=True)
+    )

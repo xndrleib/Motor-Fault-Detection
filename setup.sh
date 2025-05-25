@@ -25,13 +25,4 @@ ENV_NAME=$(grep 'name:' environment.yml | awk '{print $2}')
 echo "Activating environment: $ENV_NAME"
 conda activate "$ENV_NAME"
 
-# Check if we're on Linux for GPU-compatible PyTorch installation
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    echo "Detected Linux OS. Installing GPU-compatible PyTorch..."
-    conda install pytorch pytorch-cuda=11.8 -c pytorch -c nvidia -y
-else
-    echo "Non-Linux OS detected. Installing CPU-only PyTorch..."
-    conda install pytorch::pytorch -c pytorch -y
-fi
-
 echo "Setup complete. The $ENV_NAME environment is ready."

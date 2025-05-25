@@ -9,8 +9,17 @@ import random
 from src.electrical_signature_frequencies import ANOMALY_FREQS
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from typing import List, Tuple, Optional, Dict
+from tqdm.auto import tqdm
 
-def read_oscilloscope_data(file_path, output_path=None):
+
+def read_oscilloscope_data(
+    file_path: str,
+    output_path: Optional[str] = None
+) -> pd.DataFrame:
+    """
+    Reads oscilloscope ASCII data file to DataFrame with columns ['Time', 'Data'].
+    """
     time = []
     channel_1 = []
 
@@ -46,6 +55,132 @@ def load_data_from_directory(directory):
             data.append(df['Amplitude'].values)
     return np.array(data)
 
+def preprocessing(
+    metadata_df: pd.DataFrame,
+    out_dir: str,
+    segment_length: int,
+    step: int,
+    f_sampling: int,
+    cutoff_freq: int,
+    apply_window: bool = False,
+    db: bool = True,
+) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray]:
+    """
+    Convert every measurement in *metadata_df* into FFT magnitude windows.
+
+    Parameters
+    ----------
+    metadata_df : pd.DataFrame
+        Measurement-level table produced by `create_metadata_df`.  **Must** be
+        indexed by `"measurement_id"` and contain at least the columns:
+
+            ["state", "phase", "load_condition", "experiment"]
+
+    out_dir : str
+        Destination directory for the three artefacts written to disk.
+
+    segment_length : int
+        Number of time-domain samples per window.
+
+    step : int
+        Hop-size (in samples) between consecutive windows.
+
+    f_sampling : int
+        Sampling frequency (Hz) used to compute the frequency vector.
+
+    cutoff_freq : int
+        Keep FFT bins only up to this frequency (Hz).
+
+    apply_window : bool, optional
+        If *True*, applies a Hann window to every slice before the FFT.
+        Default = *False* (good enough for equally spaced integer cycles).
+
+    db : bool, optional
+        If *True*, returns magnitude in decibels.  Default = *True*.
+
+    Returns
+    -------
+    segments : np.ndarray
+        Dense float32 array of shape *(N_segments, segment_length)* holding the
+        pre-processed FFT spectra.
+
+    seg_meta_df : pd.DataFrame
+        Segment-level metadata indexed by the **compound** key
+        ``["measurement_id", "segment_idx"]`` - row order is **identical** to
+        *segments*.
+
+    freqs : np.ndarray
+        1-D float64 array (length = *segment_length*) with the frequency bins
+        (post cut-off).
+
+    Notes
+    -----
+    * The function deliberately **does not** sort the DataFrame, preserving the
+      original row order so that `segments[i]` <—> `seg_meta_df.iloc[i]`.
+    """
+    seg_rows: List[dict] = []
+    seg_arrays: List[np.ndarray] = []
+    freqs: Optional[np.ndarray] = None
+
+    for m_id, meta in tqdm(metadata_df.iterrows(),
+                           total=len(metadata_df),
+                           desc="pre-processing"):
+        if meta['file_path'].split('.')[-1] == 'csv':
+            # 1) Load the CSV
+            df = load_measurement(m_id, metadata_df)
+            current = df["Current"].dropna().values
+        elif meta['file_path'].split('.')[-1] == 'txt':
+            df = read_oscilloscope_data(meta['file_path'])
+            current = df["Data"].dropna().values    
+
+        # 2) Time-domain slicing
+        win_arr = segment_signal(
+            current,
+            segment_length=segment_length,
+            step=step,
+            apply_window=apply_window,
+        )
+
+        # 3) FFT magnitude spectra
+        fft_arr, freqs = perform_fft_on_segments(
+            win_arr,
+            f_sampling=f_sampling,
+            cutoff_freq=cutoff_freq,
+            db=db,
+        )
+
+        # 4) Build a metadata row for every segment
+        n_segments = fft_arr.shape[0]
+        for s_idx in range(n_segments):
+            start_t = df.index[s_idx * step]
+            end_t   = df.index[s_idx * step + segment_length - 1]
+            seg_rows.append({
+                "measurement_id":  m_id,
+                'base_id':         meta["base_id"],  
+                "segment_idx":     s_idx,
+                "start_time":      float(start_t),
+                "end_time":        float(end_t),
+                "state":           meta["state"],
+                "binary_label":    0 if meta["state"] == "normal" else 1,
+                "multiclass_label": meta["state"],
+                "phase":           int(meta["phase"]),
+                "load_condition":  meta["load_condition"],
+                "experiment":      meta["experiment"],
+            })
+        seg_arrays.append(fft_arr.astype(np.float32))
+
+    # 5) Concatenate and persist
+    segments = np.vstack(seg_arrays)                              # shape = (N, L)
+    seg_meta_df = pd.DataFrame(seg_rows).set_index(
+        ["measurement_id", "segment_idx"]
+    )
+
+    os.makedirs(out_dir, exist_ok=True)
+    np.save(os.path.join(out_dir, "segments.npy"), segments)
+    np.save(os.path.join(out_dir, "freqs.npy"), freqs)
+    seg_meta_df.to_csv(os.path.join(out_dir, "segments_metadata.csv"))
+
+    return segments, seg_meta_df, freqs
 
 def segment_signal(signal, segment_length, step=None, overlap=None, apply_window=True):
     """
@@ -192,173 +327,6 @@ def process_time_series(input_data, output_dir, window_length=20000, shift=20, f
     
     print(f'Results saved to {output_dir}')
     return fft_segments, freqs
-
-def extract_segment(fft_data, target_frequency, segment_length):
-    """
-    Extracts a segment around a target frequency from FFT-transformed data.
-    
-    Parameters:
-    - fft_data: A single FFT-transformed data array.
-    - target_frequency: The frequency at which to center the extracted segment.
-    - segment_length: The number of data points in each segment.
-    
-    Returns:
-    - segment: Extracted segment array.
-    """
-    target_index = int(target_frequency * 2 + 2)  # Adjust index based on sampling rate if needed
-    start = max(0, target_index - segment_length // 2 - 1)
-    end = min(len(fft_data), target_index + segment_length // 2 - 1)
-    segment = fft_data[start:end]
-
-    # Pad segment if it's shorter than the specified segment length
-    if len(segment) < segment_length:
-        segment = np.pad(segment, (0, segment_length - len(segment)), 'constant')
-
-    return segment
-
-def generate_synthetic_peak(length, peak_amplitude, sigma=1.0, method='gaussian'):
-    """
-    Generates a synthetic peak profile of a given length.
-    
-    Parameters:
-    -----------
-    length : int
-        The number of points in the peak profile.
-    peak_amplitude : float
-        The maximum amplitude of the peak.
-    sigma : float, optional
-        Standard deviation for the Gaussian profile (default is 1.0).
-    method : str, optional
-        Method to generate the peak. Options:
-          - 'gaussian': Returns a Gaussian-shaped peak.
-          - 'constant': Returns a constant peak profile.
-    
-    Returns:
-    --------
-    np.ndarray
-        A 1D array representing the synthetic peak profile.
-    """
-    if method == 'gaussian':
-        x = np.arange(length)
-        center = length // 2
-        profile = peak_amplitude * np.exp(-((x - center) ** 2) / (2 * sigma**2))
-    elif method == 'constant':
-        profile = np.full(length, peak_amplitude)
-    else:
-        raise ValueError(f"Unsupported peak generation method: {method}")
-    return profile
-
-def normalize_segment(segment, method='z-score'):
-    """
-    Normalizes a segment using the specified method.
-    
-    Parameters:
-    - segment: Array representing the segment to normalize.
-    - method: Normalization method, either 'z-score' (standardization) or 'min-max'.
-    
-    Returns:
-    - normalized_segment: The normalized segment array.
-    - stats: Normalization statistics (mean and std for z-score, min and max for min-max).
-    """
-    if method == 'z-score':
-        mean = np.mean(segment)
-        std = np.std(segment)
-        normalized_segment = (segment - mean) / (std + 1e-8)  # Avoid division by zero
-        stats = (mean, std)
-    elif method == 'min-max':
-        min_val = np.min(segment)
-        max_val = np.max(segment)
-        normalized_segment = (segment - min_val) / (max_val - min_val + 1e-8)  # Avoid division by zero
-        stats = (min_val, max_val)
-    else:
-        raise ValueError("Normalization method must be either 'z-score' or 'min-max'")
-    return normalized_segment, stats
-
-def extract_and_normalize_peak_segments(fft_data, segment_length=20, target_frequency=50, method='z-score'):
-    """
-    Extracts and normalizes peak segments from FFT-transformed data based on a target frequency.
-    
-    Parameters:
-    - fft_data: A 2D array of FFT-transformed data (each row is a different sample).
-    - segment_length: The number of data points in each segment.
-    - target_frequency: The frequency at which to center the extracted segment.
-    - method: Normalization method, either 'z-score' (standardization) or 'min-max'.
-    
-    Returns:
-    - peak_segments: Array of normalized peak segments centered around target frequency.
-    - stats: Array of tuples containing normalization statistics for each segment
-             (mean and std for z-score, min and max for min-max).
-    """
-    peak_segments = []
-    stats = []
-
-    for spec in fft_data:
-        segment = extract_segment(spec, target_frequency, segment_length)
-        normalized_segment, segment_stats = normalize_segment(segment, method)
-        peak_segments.append(normalized_segment)
-        stats.append(segment_stats)
-
-    return np.array(peak_segments), np.array(stats)
-
-
-def insert_synthetic_peaks(segment, fft_freqs, fault_type, engine_config, 
-                           peak_segment, peak_amplitude=5.0, amplitude_range=None, peak_generator=None, **kwargs):
-    """
-    Inserts synthetic fault peaks into a given FFT segment.
-    
-    Parameters:
-    -----------
-    segment : np.ndarray
-        The FFT magnitude segment from a normal signal.
-    fft_freqs : np.ndarray
-        The frequency bins corresponding to the FFT segment.
-    fault_type : str
-        The fault type to simulate (should match a key in ANOMALY_FREQS).
-    engine_config : dict
-        Engine configuration parameters used to compute fault frequencies.
-    peak_segment : int, optional
-        Half-window size (in frequency bins) around each fault frequency to modify (default 6).
-    peak_amplitude : float, optional
-        The amplitude boost to apply to simulate the fault (default 5.0).
-    peak_generator : callable, optional
-        A function that generates a synthetic peak profile. It should accept at least the following arguments:
-          - length: the length of the profile,
-          - peak_amplitude: the peak amplitude,
-          plus any additional keyword arguments.
-        If None, a constant boost is applied.
-    **kwargs:
-        Additional keyword arguments passed to the peak_generator.
-    
-    Returns:
-    --------
-    np.ndarray
-        The modified segment with synthetic peaks inserted.
-    """
-    modified_segment = segment.copy()
-    # Retrieve target fault frequencies using the signature function
-    fault_freqs = ANOMALY_FREQS.get(fault_type, lambda ec: [])(engine_config)
-
-    if amplitude_range is not None:
-        current_amp = random.uniform(*amplitude_range)
-    else:
-        current_amp = peak_amplitude
-    
-    for freq in fault_freqs:
-        # Find the index in fft_freqs closest to the fault frequency
-        idx = np.argmin(np.abs(fft_freqs - freq))
-        start_idx = max(0, idx - peak_segment)
-        end_idx = min(len(modified_segment), idx + peak_segment + 1)
-        window_length = end_idx - start_idx
-        
-        # Generate a peak profile using the provided peak_generator or default to a constant boost
-        if peak_generator is not None:
-            profile = peak_generator(window_length, current_amp, **kwargs)
-        else:
-            profile = np.full(window_length, peak_amplitude)
-        
-        # Add the synthetic peak profile into the segment
-        modified_segment[start_idx:end_idx] += profile
-    return modified_segment
 
 def process_file(file_path, label, 
                  f_sampling=10000, cutoff_freq=250, segment_length=10000, step=20, 
@@ -591,6 +559,7 @@ def create_dataset(file_label_map, mode="binary",
     X_test_raw  = np.array(test_segments, dtype=np.float32)
     
     if normalization_method:
+        # TODO: Replace by Normalizer
         X_train = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_train_raw])
         X_val   = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_val_raw])
         X_test  = np.array([normalize_segment(seg, method=normalization_method)[0] for seg in X_test_raw])
@@ -632,54 +601,36 @@ def create_dataset(file_label_map, mode="binary",
         "label_encoder": le if mode=="multiclass" else None
     }
 
-
-
-def create_dataloaders(dataset, batch_size=16):
+def make_importance_mask(
+        freqs: np.ndarray,
+        fault_freqs: Dict[str, np.ndarray],
+        delta_hz: float = 3.0,
+        smooth: bool = False
+    ) -> np.ndarray:
     """
-    Creates PyTorch DataLoaders from the dataset dictionary.
+    Returns a 1-D array (len = len(freqs)) with 1.0 inside ±delta_hz of ANY
+    characteristic fault frequency and 0.0 elsewhere.
+
+    • Boolean internally → no TypeError.
+    • Optional cosine smoothing at the edges.
     """
-    # Training DataLoader
-    X_train = torch.tensor(dataset["X_train"], dtype=torch.float32).unsqueeze(1)
-    y_train = torch.tensor(dataset["y_train"], dtype=torch.long)
-    train_ds = TensorDataset(X_train, y_train)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    mask_bool = np.zeros_like(freqs, dtype=bool)
+    for f_list in fault_freqs.values():
+        for f0 in f_list:
+            mask_bool |= np.abs(freqs - f0) <= delta_hz
 
-    # Validation DataLoader
-    X_val = torch.tensor(dataset["X_val"], dtype=torch.float32).unsqueeze(1)
-    y_val = torch.tensor(dataset["y_val"], dtype=torch.long)
-    val_ds = TensorDataset(X_val, y_val)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    if not smooth:
+        return mask_bool.astype(np.float32)
 
-    # Test DataLoader
-    X_test = torch.tensor(dataset["X_test"], dtype=torch.float32).unsqueeze(1)
-    y_test = torch.tensor(dataset["y_test"], dtype=torch.long)
-    test_ds = TensorDataset(X_test, y_test)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
-    
-    return train_loader, val_loader, test_loader
+    mask = np.zeros_like(freqs, dtype=np.float32)
+    for f_list in fault_freqs.values():
+        for f0 in f_list:
+            dist = np.abs(freqs - f0)
+            ramp = 0.5 * (1 + np.cos(np.pi * dist / (1.5 * delta_hz)))
+            mask += np.where(dist <= 1.5 * delta_hz, ramp, 0.0)
+    mask = np.clip(mask, 0, 1)
+    return mask
 
-def generate_synthetic_peaks(vae_model, num_samples, latent_dim, segment_mins, segment_maxs):
-    """
-    Generate synthetic peak segments using the trained VAE.
-    """
-    vae_model.eval()
-    device = next(vae_model.parameters()).device
-
-    with torch.no_grad():
-        z = torch.randn(num_samples, latent_dim).to(device)
-        x_decoded_input = vae_model.decoder_input(z)
-        generated = vae_model.decoder(x_decoded_input)
-        generated = generated.cpu().numpy()
-        generated = generated.squeeze(1)  # Remove channel dimension
-
-    denormalized_peaks = []
-    for i, segment in enumerate(generated):
-        min_val = segment_mins[i % len(segment_mins)]
-        max_val = segment_maxs[i % len(segment_maxs)]
-        denormalized_segment = segment * (max_val - min_val + 1e-8) + min_val
-        denormalized_peaks.append(denormalized_segment)
-
-    return np.array(denormalized_peaks)
 
 def create_metadata_df(base_dir: str, state2name: dict | None = None) -> pd.DataFrame:
     """
@@ -838,3 +789,50 @@ def load_measurement(measurement_id: str, metadata_df: pd.DataFrame) -> pd.DataF
     df.set_index('Time', inplace=True) 
     df.sort_index(inplace=True)
     return df
+
+def filter_segments(
+    seg_meta_df: pd.DataFrame,
+    segments: np.ndarray,
+    training_classes: List[str],
+    loads_to_use: List[str],
+    phases_to_use: List[str]
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """
+    Filter segment metadata and corresponding segments array based on specified criteria.
+
+    Parameters
+    ----------
+    seg_meta_df : pd.DataFrame
+        DataFrame containing segment metadata. Must have columns:
+        - 'state'
+        - 'load_condition'
+        - 'phase'
+    segments : np.ndarray
+        2D array of segment data where each row corresponds to a row in seg_meta_df.
+    training_classes : List[str]
+        Allowed values for the 'state' column.
+    loads_to_use : List[str]
+        Allowed values for the 'load_condition' column.
+    phases_to_use : List[str]
+        Allowed values for the 'phase' column.
+
+    Returns
+    -------
+    Tuple[pd.DataFrame, np.ndarray]
+        A tuple containing:
+        - Filtered DataFrame (sub-set of seg_meta_df)
+        - Filtered segments array (rows matching the filtered DataFrame)
+    """
+    # Build individual masks
+    training_mask = seg_meta_df['state'].isin(training_classes)
+    loads_mask    = seg_meta_df['load_condition'].isin(loads_to_use)
+    phases_mask   = seg_meta_df['phase'].isin(phases_to_use)
+
+    # Combine masks
+    final_mask = training_mask & loads_mask & phases_mask
+
+    # Apply mask
+    filtered_meta     = seg_meta_df.loc[final_mask].reset_index(drop=True)
+    filtered_segments = segments[final_mask]
+
+    return filtered_meta, filtered_segments

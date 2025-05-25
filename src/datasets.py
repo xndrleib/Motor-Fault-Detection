@@ -1,11 +1,177 @@
 
 import numpy as np
 import torch
+import os
 from torch.utils.data import Dataset
 from typing import Any, Dict, Optional, Tuple, List
 from sklearn.preprocessing import LabelEncoder
 from src.anomaly_injector import CompositeAnomalyInjector, NoiseInjector
 from src.normalization import Normalizer
+from sklearn.model_selection import train_test_split
+from torch.utils.data import TensorDataset
+from pathlib import Path
+
+def _min_per_class(group: Dict[str, np.ndarray]) -> int:
+    """Returns the smallest class count in the group for balancing."""
+    return min(len(v) for v in group.values())
+
+
+
+def create_balanced_datasets(
+    segments: np.ndarray,
+    seg_meta_df,
+    freqs: np.ndarray,
+    fault_freqs: Dict[str, np.ndarray],
+    mode: str = "binary",
+    normalizer: Optional[Normalizer] = None,
+    test_size: float = 0.30,
+    val_size: float = 0.20,
+    seed: int = 42,
+    anomaly_injector: Optional[Any] = None,
+    real_fault_train: int = 0,
+    save_indices: bool = False,
+    indices_dir: Optional[os.PathLike] = None,
+    return_indices: bool = False,
+    train_dataset_cls = None,
+    train_dataset_kwargs: Optional[dict] = None
+) -> Dict[str, Any]:
+    """
+    Split → balance → build (train, val, test) datasets.
+
+    *If ``normalizer`` is global and not yet fitted, it is fitted on all
+    **training** windows before dataset construction.*
+
+    Accepts a custom Dataset class (train_dataset_cls) for training set, and kwargs for its configuration.
+    """
+    if train_dataset_cls is None:
+        train_dataset_cls = HybridAugFaultDataset
+    if train_dataset_kwargs is None:
+        train_dataset_kwargs = {}
+
+    rng = np.random.default_rng(seed)
+
+    # ── 1. stratified index split (unchanged) ──────────────────────────────
+    normal_idx    = seg_meta_df.index[seg_meta_df["state"] == "normal"].to_numpy()
+    fault_idx_all = seg_meta_df.index[seg_meta_df["state"] != "normal"].to_numpy()
+
+    real_fault_train = min(int(real_fault_train), len(fault_idx_all))
+    train_fault_idx  = rng.choice(fault_idx_all, real_fault_train, replace=False)
+    fault_idx_eval   = np.setdiff1d(fault_idx_all, train_fault_idx)
+
+    norm_train_idx, norm_test_idx = train_test_split(
+        normal_idx, test_size=test_size, random_state=seed, shuffle=True
+    )
+    norm_train_idx, norm_val_idx = train_test_split(
+        norm_train_idx,
+        test_size=val_size / (1.0 - test_size),
+        random_state=seed,
+        shuffle=True,
+    )
+
+    fault_val_idx, fault_test_idx = train_test_split(
+        fault_idx_eval,
+        test_size=test_size / (val_size + test_size),
+        random_state=seed,
+        shuffle=True,
+    )
+
+    # ── 2. undersample VAL / TEST for perfect balance ─────────────────────
+    if mode == "binary":
+        by_cls_val  = {"normal": norm_val_idx,  "fault": fault_val_idx}
+        by_cls_test = {"normal": norm_test_idx, "fault": fault_test_idx}
+        n_val  = _min_per_class(by_cls_val)
+        n_test = _min_per_class(by_cls_test)
+        val_idx  = np.concatenate([
+            rng.choice(by_cls_val["normal"], n_val,  replace=False),
+            rng.choice(by_cls_val["fault"],  n_val,  replace=False),
+        ])
+        test_idx = np.concatenate([
+            rng.choice(by_cls_test["normal"], n_test, replace=False),
+            rng.choice(by_cls_test["fault"],  n_test, replace=False),
+        ])
+    else:  # multiclass
+        classes     = seg_meta_df["state"].unique().tolist()
+        by_cls_val  = {c: seg_meta_df.index[
+            (seg_meta_df["state"] == c) &
+            (seg_meta_df.index.isin(norm_val_idx)  |
+             seg_meta_df.index.isin(fault_val_idx))
+        ].to_numpy() for c in classes}
+        by_cls_test = {c: seg_meta_df.index[
+            (seg_meta_df["state"] == c) &
+            (seg_meta_df.index.isin(norm_test_idx) |
+             seg_meta_df.index.isin(fault_test_idx))
+        ].to_numpy() for c in classes}
+        n_val  = _min_per_class(by_cls_val)
+        n_test = _min_per_class(by_cls_test)
+        val_idx  = np.concatenate([rng.choice(by_cls_val[c],  n_val,  False) for c in classes])
+        test_idx = np.concatenate([rng.choice(by_cls_test[c], n_test, False) for c in classes])
+
+    train_idx = np.concatenate([norm_train_idx, train_fault_idx])
+
+    # ── 3. persist indices (optional) ─────────────────────────────────────
+    if save_indices:
+        p = Path(indices_dir or os.getcwd()); p.mkdir(parents=True, exist_ok=True)
+        np.save(p / f"train_idx_{mode}.npy", train_idx)
+        np.save(p / f"val_idx_{mode}.npy",   val_idx)
+        np.save(p / f"test_idx_{mode}.npy",  test_idx)
+        print(f"[✓] index arrays saved to {p.resolve()}/")
+
+    # ── 4. build NumPy views ──────────────────────────────────────────────
+    i2r   = seg_meta_df.index.get_indexer
+    X_trn = segments[i2r(train_idx)]
+    X_val = segments[i2r(val_idx)]
+    X_tst = segments[i2r(test_idx)]
+
+    # ── 5. fit global normaliser **once** on TRAIN windows ───────────────
+    if normalizer is not None and normalizer.mode == "global" and normalizer.stats is None:
+        normalizer.fit(X_trn)
+
+    # ── 6. normalise VAL / TEST immediately (TRAIN is done on‑the‑fly) ───
+    if normalizer is not None:
+        X_val = normalizer.transform(X_val)
+        X_tst = normalizer.transform(X_tst)
+
+    # ── 7. labels for evaluation tensors ─────────────────────────────────
+    y_val_raw  = seg_meta_df.loc[val_idx,  "state"].values
+    y_tst_raw  = seg_meta_df.loc[test_idx, "state"].values
+
+    if mode == "binary":
+        y_val = (y_val_raw  != "normal").astype(np.int64)
+        y_tst = (y_tst_raw  != "normal").astype(np.int64)
+        label_encoder = None
+    else:
+        label_encoder = LabelEncoder().fit(seg_meta_df["state"])
+        y_val = label_encoder.transform(y_val_raw).astype(np.int64)
+        y_tst = label_encoder.transform(y_tst_raw).astype(np.int64)
+
+    # ── 9. construct datasets ───────────────────────────────────────────
+
+    train_ds = train_dataset_cls(
+        segments         = X_trn,
+        seg_meta_df      = seg_meta_df.loc[train_idx],
+        freqs            = freqs,
+        fault_freqs      = fault_freqs,
+        mode             = mode,
+        normalizer       = normalizer,
+        anomaly_injector = anomaly_injector,
+        **train_dataset_kwargs,
+    )
+
+    val_ds  = TensorDataset(
+        torch.tensor(X_val, dtype=torch.float32).unsqueeze(1),
+        torch.tensor(y_val, dtype=torch.long)
+    )
+    test_ds = TensorDataset(
+        torch.tensor(X_tst, dtype=torch.float32).unsqueeze(1),
+        torch.tensor(y_tst, dtype=torch.long)
+    )
+
+    out: Dict[str, Any] = {"train": train_ds, "val": val_ds, "test": test_ds, "normalizer": normalizer}
+    if mode == "multiclass":
+        out["label_encoder"] = label_encoder
+    if return_indices:
+        out.update({"train_idx": train_idx, "val_idx": val_idx, "test_idx": test_idx})
+    return out
 
 class FaultInjectionDataset(Dataset):
     """
@@ -268,6 +434,7 @@ class AugmentedPoolDataset(Dataset):
         y = torch.tensor(int(self.y_int[idx]), dtype=torch.long)
         return x, y
 
+
 class HybridAugFaultDataset(Dataset):
     """
     *Per-epoch* dynamic dataset that, for every NORMAL FFT window, returns:
@@ -288,9 +455,9 @@ class HybridAugFaultDataset(Dataset):
 
     Extra augmentation knobs
     ------------------------
-    K : int   – fault variants per fault-type & window  (default 2)
-    R : int   – noisy-normal variants per window        (default 1)
-    keep_orig : bool  – store an untouched copy of every normal window
+    K : int   - fault variants per fault-type & window  (default 2)
+    R : int   - noisy-normal variants per window        (default 1)
+    keep_orig : bool  - store an untouched copy of every normal window
     """
 
     def __init__(self,
@@ -321,6 +488,9 @@ class HybridAugFaultDataset(Dataset):
         self.cache_on  = cache
         self.rng       = np.random.RandomState(seed)
 
+        if self.inj is None and (self.K > 0 or self.R > 0):
+            raise ValueError("K>0 or R>0 require a non-None anomaly_injector.")
+
         # label encoder
         if mode == "multiclass":
             self.le = LabelEncoder().fit(self.fault_t + ["normal"])
@@ -337,6 +507,7 @@ class HybridAugFaultDataset(Dataset):
         self.variant_map: List[Tuple[int,str,str,int]] = []
         # tuple = (base_idx, base_state, variant_tag, fault_idx)
 
+        GAUSS = "__gauss"
         for idx, state in enumerate(self.meta["state"]):
             if state == "normal":
                 # untouched copy
@@ -347,12 +518,14 @@ class HybridAugFaultDataset(Dataset):
                 for r in range(self.R):
                     self.variant_map.append((idx, "normal", f"noise{r}", -1))
 
-                # K synthetic faults per fault class
-                for f_idx, ftype in enumerate(self.fault_t):
-                    for k in range(self.K):
-                        self.variant_map.append((idx, ftype, f"{ftype}_{k}", f_idx))
+                # K synthetic faults
+                for k in range(self.K):
+                    f_idx = self.rng.randint(len(self.fault_t))
+                    ftype = self.fault_t[f_idx]
+                    tag = f"{ftype}{GAUSS}{k}"
+                    self.variant_map.append((idx, ftype, tag, f_idx))
             else:
-                # real fault window – keep single entry
+                # real fault window - keep single entry
                 self.variant_map.append((idx, state, "real", -1))
 
         # shuffle for randomness
@@ -380,8 +553,7 @@ class HybridAugFaultDataset(Dataset):
         # --- decide variant --------------------------------------------------
         if tag.startswith("noise"):
             seg = self.inj.inject(seg, self.freqs, fault_freqs=None, injector_keys=["noise"])
-
-        elif "_" in tag:                            # synthetic Gaussian fault
+        elif "__gauss" in tag:                            # synthetic Gaussian fault
             ftype = self.fault_t[f_idx]
             seg = self.inj.inject(
                 segment       = seg,
@@ -395,7 +567,7 @@ class HybridAugFaultDataset(Dataset):
             if "noise" in self.inj.injectors:
                 seg = self.inj.inject(seg, self.freqs, fault_freqs=None, injector_keys=["noise"])
 
-        # else: 'orig' or 'real' – keep as is
+        # else: 'orig' or 'real' - keep as is
 
         # --- normalisation ---------------------------------------------------
         if self.norm is not None:

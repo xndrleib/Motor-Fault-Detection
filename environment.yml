@@ -25,3 +25,6 @@ dependencies:
   - nb_conda_kernels
   - pip:
     - comet_ml
+    - torch
+    - torchvision
+    - torchaudio

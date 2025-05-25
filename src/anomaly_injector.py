@@ -3,7 +3,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
 import random
-from src.electrical_signature_frequencies import ANOMALY_FREQS
 
 class BaseAnomalyInjector(ABC):
     @abstractmethod
@@ -126,10 +125,5 @@ class CompositeAnomalyInjector(BaseAnomalyInjector):
         # Apply injectors
         for key in keys_to_apply:
             injector = self.injectors[key]
-            
-            try:
-                modified_segment = injector.inject(modified_segment, fft_freqs, fault_freqs)
-            except TypeError:
-                modified_segment = injector.inject(modified_segment, fft_freqs)
-
+            modified_segment = injector.inject(modified_segment, fft_freqs, fault_freqs)
         return modified_segment

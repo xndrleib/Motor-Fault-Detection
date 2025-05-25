@@ -82,47 +82,10 @@ class SpectralPriorAttention(nn.Module):
     def forward(self, x):                              # x: (B,C,L)
         return x * (1.0 + self.gain * self.mask)
 
-class ResidualBlock(nn.Module):
-    """
-    Definition of the Residual Block used in the ResNet model.
-    - use_se: If True, integrates a Squeeze-and-Excitation (SE) block.
-    """
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None, use_se=False):
-        super(ResidualBlock, self).__init__()
-        # Pre-activation ordering: BN -> ReLU -> Conv
-        self.bn1 = nn.BatchNorm1d(in_channels)
-        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=3, padding=1)
-        self.downsample = downsample
-        self.use_se = use_se
-
-        if use_se:
-            self.se = SEBlock(out_channels)
-
-    def forward(self, x):
-        residual = x
-        
-        # Pre-activation: first BN and ReLU on input
-        out = F.relu(self.bn1(x))
-        out = self.conv1(out)
-        out = F.relu(self.bn2(out))
-        out = self.conv2(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(residual)
-        if self.use_se:
-            out = self.se(out)
-        
-        out += residual
-        out = F.relu(out)
-        return out
-    
 class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=2,
-                 dropout_rate=0.5, block_kwargs=None, 
-                 prior_kwargs: dict | None = None,
-                 init_gain: float = 2.0):
+                 dropout_rate=0.5, block_kwargs=None,
+                 prior_kwargs: dict | None = None):
         super().__init__()
         if block_kwargs is None:
             block_kwargs = {}
@@ -152,7 +115,7 @@ class ResNet(nn.Module):
                 nn.Conv1d(self.in_channels, out_channels, kernel_size=1, stride=stride),
                 nn.BatchNorm1d(out_channels)
                 )
-            
+
         layers = [block(self.in_channels, out_channels, stride, downsample, **block_kwargs)]
         self.in_channels = out_channels
         for _ in range(1, blocks):
@@ -182,66 +145,40 @@ class ResNet(nn.Module):
         out = self.avg_pool(out).squeeze(-1)
         out = F.dropout(out, p=self.dropout_rate, training=self.training)
         return self.fc(out)
-
-class VAE(nn.Module):
-    """
-    Variational Autoencoder (VAE) model 
-    """
-    def __init__(self, input_dim, latent_dim, dropout_p=0.2):
-        super(VAE, self).__init__()
-        # Encoder
-        self.encoder = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size=3, padding=1),
-            nn.BatchNorm1d(64),
-            nn.LeakyReLU(),
-            nn.Dropout(p=dropout_p),
-
-            nn.Conv1d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm1d(128),
-            nn.LeakyReLU(),
-            nn.Dropout(p=dropout_p),
-
-            nn.Flatten(),
-            nn.Linear(128 * input_dim, 128), 
-            nn.LeakyReLU()
-        )
-        self.fc_mu = nn.Linear(128, latent_dim)
-        self.fc_logvar = nn.Linear(128, latent_dim)
-
-        # Decoder
-        self.decoder_input = nn.Sequential(
-            nn.Linear(latent_dim, 128),
-            nn.LeakyReLU(),
-            nn.Dropout(p=dropout_p),
-
-            nn.Linear(128, 128 * input_dim),
-            nn.LeakyReLU()
-        )
-        self.decoder = nn.Sequential(
-            nn.Unflatten(1, (128, input_dim)),
-            nn.ConvTranspose1d(128, 64, kernel_size=3, padding=1),
-            nn.BatchNorm1d(64),
-            nn.LeakyReLU(),
-            nn.Dropout(p=dropout_p),
-            
-            nn.ConvTranspose1d(64, 1, kernel_size=3, padding=1),
-        )
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
     
-    def generate(self, z):
-        x_decoded_input = self.decoder_input(z)
-        x_decoded = self.decoder(x_decoded_input)
-        return x_decoded
+
+class ResidualBlock(nn.Module):
+    """
+    Definition of the Residual Block used in the ResNet model.
+    - use_se: If True, integrates a Squeeze-and-Excitation (SE) block.
+    """
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, use_se=False):
+        super(ResidualBlock, self).__init__()
+        # Pre-activation ordering: BN -> ReLU -> Conv
+        self.bn1 = nn.BatchNorm1d(in_channels)
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
+        self.bn2 = nn.BatchNorm1d(out_channels)
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.downsample = downsample
+        self.use_se = use_se
+
+        if use_se:
+            self.se = SEBlock(out_channels)
 
     def forward(self, x):
-        x_encoded = self.encoder(x)
-        mu = self.fc_mu(x_encoded)
-        logvar = self.fc_logvar(x_encoded)
-        z = self.reparameterize(mu, logvar)
-        x_decoded_input = self.decoder_input(z)
-        x_decoded = self.decoder(x_decoded_input)
-        return x_decoded, mu, logvar
+        residual = x
+
+        # Pre-activation: first BN and ReLU on input
+        out = F.relu(self.bn1(x))
+        out = self.conv1(out)
+        out = F.relu(self.bn2(out))
+        out = self.conv2(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(residual)
+        if self.use_se:
+            out = self.se(out)
+
+        out += residual
+        out = F.relu(out)
+        return out

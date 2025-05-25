@@ -4,6 +4,25 @@ import os
 import random
 from pathlib import Path
 import torch
+import datetime
+
+def set_all_seeds(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
+
+def create_experiment_folder(base_dir="../res", exp_name="engine_1"):
+    # e.g., res/2024-05-21_15-03-25_engine_1/
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    folder_name = f"{timestamp}_{exp_name}"
+    full_path = Path(base_dir) / folder_name
+    full_path.mkdir(parents=True, exist_ok=False)
+    print(f"[✓] Experiment results folder: {full_path.resolve()}")
+    return full_path
 
 
 def save_best(model, epoch, metric, mode, out_dir):

@@ -1,4 +1,4 @@
-
+import matplotlib as mpl
 import os
 import random
 import math
@@ -259,3 +259,66 @@ def plot_structural_deviations(segments, seg_meta, freqs, target_state, loads, p
             ax=ax
             )
     return ax
+
+
+def plot_heatmap(f1_mat: pd.DataFrame,
+                 title: str,
+                 counts_mat: pd.DataFrame | None = None,
+                 cmap_name: str = "viridis",
+                 save=False):
+    """
+    Fancy heat-map:
+      • perceptually uniform colormap (default = viridis, never pure white)
+      • if counts_mat is given  : annotate 'F1\\n(n)'
+        else                   : annotate 'F1'
+      • text colour chosen from cell *luminance*
+    """
+    cmap = mpl.colormaps.get_cmap(cmap_name).copy()
+    cmap.set_bad(color="#d9d9d9")
+
+    f1_arr = f1_mat.to_numpy()
+    if counts_mat is not None:
+        mask = counts_mat.to_numpy() == 0
+        f1_arr = np.ma.array(f1_arr, mask=mask)
+
+    fig, ax = plt.subplots(figsize=(4, 3))
+    im = ax.imshow(f1_arr, aspect="auto", cmap=cmap, vmin=0, vmax=1)
+
+    ax.set_xticks(np.arange(f1_mat.shape[1]), labels=f1_mat.columns)
+    ax.set_yticks(np.arange(f1_mat.shape[0]), labels=f1_mat.index)
+    ax.set_xlabel("Phase")
+    ax.set_ylabel("Load [%]")
+    ax.set_title(title)
+
+    # ── annotations ────────────────────────────────────────────────────
+    norm = mpl.colors.Normalize(vmin=0, vmax=1)
+    for i in range(f1_mat.shape[0]):
+        for j in range(f1_mat.shape[1]):
+            f1_val = f1_mat.iat[i, j]
+            # skip NaNs (masked cells already rendered grey)
+            if np.isnan(f1_val):
+                continue
+
+            # choose text colour by luminance
+            r, g, b, _ = cmap(norm(f1_val))
+            luminance = 0.2126*r + 0.7152*g + 0.0722*b
+            txt_color = "white" if luminance < 0.45 else "black"
+
+            if counts_mat is None:
+                txt = f"{f1_val:.2f}"
+            else:
+                n = int(counts_mat.iat[i, j])
+                txt = f"{f1_val:.2f}\n({n})" if n > 0 else "—\n(0)"
+
+            ax.text(j, i, txt, ha="center", va="center",
+                    color=txt_color, fontsize=7)
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    cbar.ax.set_ylabel("F₁ score")
+
+    if save:
+        # Safe file name from title (spaces to underscores, only safe chars)
+        safe_title = "".join(c if c.isalnum() or c in "_-" else "_" for c in title.replace(" ", "_"))
+        fig.savefig(f"{safe_title}.pdf", format="pdf", bbox_inches="tight", dpi=300)
+        fig.savefig(f"{safe_title}.svg", format="svg", bbox_inches="tight", dpi=300)
+    plt.show()
