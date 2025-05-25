@@ -1,3 +1,5 @@
+from typing import Optional
+
 import matplotlib as mpl
 import os
 import random
@@ -6,7 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import resample
-
+from pathlib import Path
 
 def plot_spectrum(df, freq_col="Frequency (Hz)", amp_col="Amplitude",
                   title="Frequency Spectrum", xlabel="Frequency (Hz)",
@@ -265,7 +267,7 @@ def plot_heatmap(f1_mat: pd.DataFrame,
                  title: str,
                  counts_mat: pd.DataFrame | None = None,
                  cmap_name: str = "viridis",
-                 save=False):
+                 save=False, save_path: Optional[Path] = Path('.')):
     """
     Fancy heat-map:
       • perceptually uniform colormap (default = viridis, never pure white)
@@ -319,6 +321,6 @@ def plot_heatmap(f1_mat: pd.DataFrame,
     if save:
         # Safe file name from title (spaces to underscores, only safe chars)
         safe_title = "".join(c if c.isalnum() or c in "_-" else "_" for c in title.replace(" ", "_"))
-        fig.savefig(f"{safe_title}.pdf", format="pdf", bbox_inches="tight", dpi=300)
-        fig.savefig(f"{safe_title}.svg", format="svg", bbox_inches="tight", dpi=300)
+        fig.savefig(save_path / f"{safe_title}.pdf", format="pdf", bbox_inches="tight", dpi=300)
+        fig.savefig(save_path / f"{safe_title}.png", format="png", bbox_inches="tight", dpi=300)
     plt.show()
