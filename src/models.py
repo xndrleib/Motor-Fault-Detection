@@ -90,6 +90,7 @@ class ResNet(nn.Module):
         if block_kwargs is None:
             block_kwargs = {}
 
+        self.num_classes = num_classes
         self.in_channels = 64
         self.dropout_rate = dropout_rate
         self.conv = nn.Conv1d(1, 64, kernel_size=7, stride=2, padding=3)
@@ -182,3 +183,106 @@ class ResidualBlock(nn.Module):
         out += residual
         out = F.relu(out)
         return out
+
+
+class MLP(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dims: list[int],
+        num_classes: int = 2,
+        dropout_rate: float = 0.5
+    ):
+        super().__init__()
+        layers = []
+        in_dim = input_dim
+        # Build hidden stack
+        for h in hidden_dims:
+            layers += [
+                nn.Linear(in_dim, h),
+                nn.BatchNorm1d(h),
+                nn.ReLU(inplace=True),
+                nn.Dropout(p=dropout_rate),
+            ]
+            in_dim = h
+        self.num_classes = num_classes
+        self.feature_extractor = nn.Sequential(*layers)
+        self.classifier = nn.Linear(in_dim, num_classes)
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # x shape: (batch, 1, input_dim)
+        x = x.squeeze(1)                  # → (batch, input_dim)
+        x = self.feature_extractor(x)    # → (batch, last_hidden)
+        return self.classifier(x)        # → (batch, num_classes)
+
+
+class CNN(nn.Module):
+    def __init__(
+        self,
+        num_classes: int = 2,
+        dropout_rate: float = 0.5,
+        prior_kwargs: dict | None = None,
+    ):
+        super().__init__()
+        # Optional prior attention
+        if prior_kwargs is not None:
+            self.prior_attn = BandWeightAttention(**prior_kwargs)
+        else:
+            self.prior_attn = nn.Identity()
+        self.num_classes = num_classes
+        # Initial conv
+        self.conv1 = nn.Conv1d(1, 64, kernel_size=7, stride=2, padding=3)
+        self.bn1   = nn.BatchNorm1d(64)
+
+        # Stacked conv blocks
+        self.block2 = self._make_block(64,  128)
+        self.block3 = self._make_block(128, 256)
+        self.block4 = self._make_block(256, 512)
+
+        self.avg_pool    = nn.AdaptiveAvgPool1d(1)
+        self.dropout_rate = dropout_rate
+        self.fc          = nn.Linear(512, num_classes)
+
+        self._initialize_weights()
+
+    def _make_block(self, in_ch, out_ch):
+        return nn.Sequential(
+            nn.Conv1d(in_ch, out_ch, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(out_ch),
+            nn.ReLU(inplace=True),
+        )
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # x: (batch,1,L)
+        x = self.prior_attn(x)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.avg_pool(x).squeeze(-1)
+        x = F.dropout(x, p=self.dropout_rate, training=self.training)
+        return self.fc(x)

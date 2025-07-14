@@ -34,7 +34,7 @@ def save_best(model, epoch, metric, mode, out_dir):
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fname = out_dir / f"resnet_best_{mode}.pth"
+    fname = out_dir / f"best_{mode}.pth"
 
     torch.save({
         "epoch":  epoch,

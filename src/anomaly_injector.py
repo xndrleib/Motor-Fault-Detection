@@ -94,7 +94,7 @@ class CompositeAnomalyInjector(BaseAnomalyInjector):
         Parameters:
             segment (np.ndarray): The FFT segment to modify.
             fft_freqs (np.ndarray): Frequency bins corresponding to the FFT segment.
-            fault_freqs (str): The fault frequencies to inject.
+            fault_freqs (np.ndarray): The fault frequencies to inject.
             injector_keys (list, optional): List of keys specifying which injectors to apply.
                                             If None, all injectors are applied.
         
