@@ -1,10 +1,11 @@
 # Training parameters
 # engine_1 or engine_2
-engineLabel: "engine_2"
+engineLabel: engine_2
 # binary or multiclass
 task: "binary"
-test_run: true
-comet_online: true
+model: ResNet
+test_run: false
+comet_online: false
 seed: 42
 processing_parameters:
   # Sampling frequency (Hz)
@@ -41,11 +42,9 @@ processing_parameters:
   - 1
   - 2
   - 3
-
 model_parameters:
-  attention_module: true
+  attention_module: false
   dropout: 0.2
-  
 training_parameters:
   # Number of epochs for binary classification training
   num_epochs_binary: 30
@@ -53,26 +52,19 @@ training_parameters:
   num_epochs_multi: 30
   initial_lr: 0.001
   patience: 10
-
 data_parameters:
   # Batch size for training DataLoader
-  batch_size: 512
-
+  batch_size: 4096
 dataset_parameters:
-  # Fraction of segments set aside as the test set
-  test_size: 0.3
-  # Fraction of the train+validation split that becomes the validation set
-  val_size: 0.2
-  # Normalization method applied to FFT segments ("min-max" or "z-score")
-  normalization_method: "min-max"
+  batch_size: 4096
+  normalization_method: min-max
   normalization_mode: global
-  # Augmentations
+  real_fault_train: 0
+  test_size: 0.3
+  val_size: 0.2
   train_dataset_cls: HybridAugFaultDataset
   train_dataset_kwargs:
-    # faults_per_window
-    K: 2 
-    # noisy_normal_per_window
+    K: 2
     R: 1
-    keep_orig: true
     cache: true
-  real_fault_train: 0
+    keep_orig: true
