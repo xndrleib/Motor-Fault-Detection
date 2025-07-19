@@ -7,8 +7,9 @@ import os
 import shutil
 import time
 from pathlib import Path
+from src.models import ResNet, ResidualBlock, CNN
 
-import comet_ml  # import comet_ml before the following modules: torch.
+import comet_ml
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,15 +26,15 @@ from src.datasets import create_balanced_datasets, FaultInjectionDataset, Augmen
 from src.electrical_signature_frequencies import ANOMALY_FREQS
 from src.evaluation import calculate_metrics
 from src.inference import inference_resnet_model
-from src.models import ResNet, ResidualBlock
 from src.normalization import Normalizer
-from src.train import train_resnet_epoch_cached
+from src.train import train_epoch_cached
 from src.utils import set_all_seeds, create_experiment_folder
 
 
 def setup_logger(log_dir, log_file="training.log"):
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, log_file)
+    # Configure root logger
     # Configure root logger
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -182,13 +183,13 @@ def train_and_eval(
     """
     Unified function for training, evaluating, and logging for both binary and multiclass tasks.
     """
-    logging.info(f"Training ResNet for {task} classification...")
+    logging.info(f"Training model for {task} classification...")
     # Select number of epochs based on task
     num_epochs = train_params["training_parameters"]["num_epochs_binary"] if task == "binary" else train_params["training_parameters"]["num_epochs_multi"]
     # Time the training process
     train_start = time.perf_counter()
     # Train model
-    model = train_resnet_epoch_cached(
+    model = train_epoch_cached(
         model=model,
         cached_dataset=datasets['train'],
         val_loader=val_loader,
@@ -245,7 +246,7 @@ def train_and_eval(
         meta_test["binary_prediction_state"] = np.where(predictions == 0, "normal", "anomalous")
         out_path = exp_dir / "segments_metadata_test_binary_pred.csv"
         model_name = 'bin_model'
-        model_file = checkpoints_dir / "resnet_best_binary.pth"
+        model_file = checkpoints_dir / "best_binary.pth"
     else:
         # Save multiclass label encoder and predictions, log model
         save_label_encoder(datasets["label_encoder"], exp_dir)
@@ -253,7 +254,7 @@ def train_and_eval(
         meta_test["multiclass_prediction_state"] = datasets["label_encoder"].inverse_transform(predictions)
         out_path = exp_dir / "segments_metadata_test_multiclass_pred.csv"
         model_name = 'multi_model'
-        model_file = checkpoints_dir / "resnet_best_multiclass.pth"
+        model_file = checkpoints_dir / "best_multiclass.pth"
 
     meta_test.to_csv(out_path, index=True)
     logging.info(f"{task.capitalize()} test predictions saved to: {out_path}")
@@ -454,14 +455,21 @@ def main():
     else:
         prior_kwargs=None
 
-    model = ResNet(
-        ResidualBlock, [2, 2, 2, 2],
-        num_classes=num_classes,
-        dropout_rate=train_params['model_parameters']['dropout'],
-        prior_kwargs=prior_kwargs
-    ).to(device)
+    model_type = train_params['model']
 
-    logging.info(f"{task.capitalize()} model instantiated.")
+    if model_type=='ResNet':
+        model = ResNet(
+            ResidualBlock, [2, 2, 2, 2],
+            num_classes=num_classes,
+            dropout_rate=train_params['model_parameters']['dropout'],
+            prior_kwargs=None
+        ).to(device)
+    elif model_type=='CNN':
+        model = CNN(num_classes, dropout_rate=train_params['model_parameters']['dropout']).to(device)
+    else:
+        raise ValueError(f"Unknown model: {model_type}")
+
+    logging.info(f"{task.capitalize()} {model_type} model instantiated.")
 
     train_and_eval(
         model=model,

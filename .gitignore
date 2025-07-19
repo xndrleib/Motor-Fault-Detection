@@ -965,7 +965,6 @@ pyrightconfig.json
 
 res/*
 !res/.gitkeep
-cfg.yaml
 
 dataset/engine_1/freqs.npy 
 dataset/engine_1/segments_metadata.csv 

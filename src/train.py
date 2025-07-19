@@ -9,9 +9,10 @@ import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
 
-def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=1e-3, patience=15, checkpoint_path: str | None = None,):
+
+def train_model(model, train_loader, val_loader, device, num_epochs=10, initial_lr=1e-3, patience=15, checkpoint_path: str | None = None, ):
     """
-    Trains the ResNet model with a progress bar and calls validation at the end.
+    Trains a model with a progress bar and calls validation at the end.
     • CosineAnnealingWarmRestarts scheduler
     • Early stopping
     • If `checkpoint_path` is given, the best weights are saved there.
@@ -19,7 +20,7 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
     Parameters:
     -----------
     model : nn.Module
-        The ResNet model to train.
+        The model to train.
     train_loader : DataLoader
         DataLoader for the training set.
     device : torch.device
@@ -94,7 +95,7 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
                 else:
                     check_path = '../res/checkpoints'
 
-                num_classes = model.fc.out_features
+                num_classes = model.num_classes
                 save_best(model, epoch, best_val_acc,
                             mode=('binary' if num_classes == 2 else 'multiclass'),
                             out_dir=check_path)
@@ -113,7 +114,7 @@ def train_resnet_model(model, train_loader, val_loader, device, num_epochs=10, i
         model.load_state_dict(best_state_dict)
     return model
 
-def train_resnet_epoch_cached(
+def train_epoch_cached(
     model: torch.nn.Module,
     cached_dataset,
     val_loader: torch.utils.data.DataLoader,
@@ -126,7 +127,7 @@ def train_resnet_epoch_cached(
     history_path: str | Path | None  = None,
 ):
     """
-    Train a ResNet on an EpochCachedDataset.
+    Train a model on an EpochCachedDataset.
 
     • `cached_dataset.refresh(epoch)` is called at the start of every epoch to
       redraw which normal windows become synthetic faults, keeping labels stable *within* the epoch.
@@ -153,6 +154,7 @@ def train_resnet_epoch_cached(
     best_val_acc      = 0.0
     best_state_dict   = None
     epochs_no_improve = 0
+    using_cuda = device.type == 'cuda'
 
     for epoch in range(1, num_epochs + 1):
         # ── 1.  Refresh synthetic map & build DataLoader ─────────────
@@ -162,6 +164,8 @@ def train_resnet_epoch_cached(
             batch_size=batch_size,
             shuffle=True,
             generator=torch.Generator().manual_seed(epoch),
+            # pin_memory=using_cuda,
+            # num_workers=2 if using_cuda else 0
         )
 
         # ── 2.  Training phase ───────────────────────────────────
@@ -195,8 +199,6 @@ def train_resnet_epoch_cached(
         train_losses.append(train_loss)
         logger.info(f'Epoch [{epoch}/{num_epochs}] '
                     f'train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
-        # print(f'Epoch [{epoch}/{num_epochs}] '
-        #       f'train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}')
 
         # ── 3.  Validation phase ─────────────────────────────────
         if val_loader is not None:
@@ -217,7 +219,6 @@ def train_resnet_epoch_cached(
             val_acc  = val_corr / val_total
             val_losses.append(val_loss)
             logger.info(f'  → val-loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
-            # print(f'  → val-loss: {val_loss:.4f}  acc: {val_acc:6.2%}')
 
             # ── checkpoint / early-stopping ──────────────────────
             if val_acc > best_val_acc:
@@ -230,17 +231,15 @@ def train_resnet_epoch_cached(
                 else:
                     check_path = '../res/checkpoints'
 
-                num_classes = model.fc.out_features
+                num_classes = model.num_classes
                 save_best(model, epoch, best_val_acc,
                           mode=('binary' if num_classes == 2 else 'multiclass'),
                           out_dir=check_path)
                 logger.info(f'  [✓] best model saved → {check_path}')
-                # print(f'  [✓] best model saved → {check_path}')
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= patience:
                     logger.info(f'  → Early stopping (no improve ≥ {patience})')
-                    # print(f'  → Early stopping (no improve ≥ {patience})')
                     break
         else:
             # No validation loader: record placeholder
@@ -259,7 +258,6 @@ def train_resnet_epoch_cached(
         })
         df.to_csv(history_path, index=False)
         logger.info(f"Saved training history to {history_path}")
-        # print(f"Saved training history to {history_path}")
 
     # ── load best weights before returning ────────────────────────
     if best_state_dict is not None:
