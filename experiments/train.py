@@ -7,9 +7,9 @@ import os
 import shutil
 import time
 from pathlib import Path
-from src.models import ResNet, ResidualBlock, CNN
+from src.models import ResNet, ResidualBlock, MLP, CNN
 
-import comet_ml
+import comet_ml  # import comet_ml before the following modules: torch.
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,6 +26,7 @@ from src.datasets import create_balanced_datasets, FaultInjectionDataset, Augmen
 from src.electrical_signature_frequencies import ANOMALY_FREQS
 from src.evaluation import calculate_metrics
 from src.inference import inference_resnet_model
+from src.models import ResNet, ResidualBlock
 from src.normalization import Normalizer
 from src.train import train_epoch_cached
 from src.utils import set_all_seeds, create_experiment_folder
@@ -34,7 +35,6 @@ from src.utils import set_all_seeds, create_experiment_folder
 def setup_logger(log_dir, log_file="training.log"):
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, log_file)
-    # Configure root logger
     # Configure root logger
     root = logging.getLogger()
     root.setLevel(logging.INFO)
