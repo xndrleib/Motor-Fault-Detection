@@ -58,8 +58,10 @@ def dataloader_to_numpy(dataloader):
     all_data = []
     all_labels = []
     for inputs, labels in dataloader:
-        all_data.append(inputs.numpy().reshape(inputs.size(0), -1))
-        all_labels.append(labels.numpy())
+        batch_inputs = inputs.detach().cpu().numpy().reshape(inputs.size(0), -1)
+        batch_labels = labels.detach().cpu().numpy()
+        all_data.append(batch_inputs)
+        all_labels.append(batch_labels)
     return np.concatenate(all_data), np.concatenate(all_labels)
 
 

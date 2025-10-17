@@ -44,8 +44,9 @@ def train_model(model, train_loader, val_loader, device, num_epochs=10, initial_
         model.train()
         running_loss = 0.0
 
-        with tqdm(total=len(train_loader), desc=f'Epoch {epoch}/{num_epochs}', unit='batch') as pbar:
-            for inputs, labels in train_loader:
+        num_batches = len(train_loader)
+        with tqdm(total=num_batches, desc=f'Epoch {epoch}/{num_epochs}', unit='batch') as pbar:
+            for batch_idx, (inputs, labels) in enumerate(train_loader):
                 inputs, labels = inputs.to(device), labels.to(device)
                 optimizer.zero_grad()
 
@@ -56,14 +57,13 @@ def train_model(model, train_loader, val_loader, device, num_epochs=10, initial_
                 # Backward pass and optimize
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
 
                 running_loss += loss.item() * inputs.size(0)
                 pbar.update(1)
                 pbar.set_postfix(loss=loss.item())
 
         epoch_loss = running_loss / len(train_loader.dataset)
-        print(f'Epoch [{epoch}/{num_epochs}], Loss: {epoch_loss:.4f}')
+        logger.info(f'Epoch [{epoch}/{num_epochs}], Loss: {epoch_loss:.4f}')
 
         # ── Validation ──
         if val_loader is not None:
@@ -82,7 +82,7 @@ def train_model(model, train_loader, val_loader, device, num_epochs=10, initial_
                     correct += (predicted == labels).sum().item()
             avg_val_loss = val_loss / len(val_loader.dataset)
             val_acc = correct / total
-            print(f'Validation Loss: {avg_val_loss:.4f}, Accuracy: {val_acc*100:.2f}%')
+            logger.info(f'Validation Loss: {avg_val_loss:.4f}, Accuracy: {val_acc*100:.2f}%')
 
             # ── checkpoint / early-stopping ────────────────────────────
             if val_acc > best_val_acc:
@@ -99,11 +99,11 @@ def train_model(model, train_loader, val_loader, device, num_epochs=10, initial_
                 save_best(model, epoch, best_val_acc,
                             mode=('binary' if num_classes == 2 else 'multiclass'),
                             out_dir=check_path)
-                print(f'  [✓] best model saved → {check_path}')
+                logger.info(f'  [✓] best model saved → {check_path}')
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= patience:
-                    print(f'  → Early stopping (no improve ≥ {patience})')
+                    logger.info(f'  → Early stopping (no improve ≥ {patience})')
                     break
 
         # ── Scheduler step at end of epoch ──
@@ -175,10 +175,11 @@ def train_epoch_cached(
         running_corr = 0
         total        = 0
 
-        with tqdm(total=len(train_loader),
+        num_batches = len(train_loader)
+        with tqdm(total=num_batches,
                   desc=f'Epoch {epoch}/{num_epochs}',
                   unit='batch') as pbar:
-            for x, y in train_loader:
+            for batch_idx, (x, y) in enumerate(train_loader):
                 x, y = x.to(device), y.to(device)
                 optimizer.zero_grad()
                 out = model(x)

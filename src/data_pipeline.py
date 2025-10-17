@@ -291,7 +291,7 @@ def perform_fft_on_segments(
     # Perform FFT for each segment
     for i in range(num_segments):
         fft_segments[i], freqs = time_to_freq_transform(
-            segments[i], f_sampling, db=db, cutoff_freq=cutoff_freq
+            segs[i], f_sampling, db=db, cutoff_freq=cutoff_freq
         )
     return fft_segments, freqs
 
@@ -376,19 +376,19 @@ def process_file(
     label : str
         Label for the file ('normal' or a specific fault type).
     f_sampling : int, optional
-        Sampling frequency (default 10000 Hz).
+        Sampling frequency.
     cutoff_freq : float, optional
-        Maximum frequency (Hz) to keep from the FFT (default 250 Hz).
+        Maximum frequency (Hz) to keep from the FFT.
     segment_length : int, optional
-        Length (in points) of each segment for FFT extraction (default 6).
+        Length (in points) of each segment for FFT extraction.
     step : int, optional
-        Step size for segmenting the signal (default 20).
+        Step size for segmenting the signal.
     apply_window : bool, optional
-        If True, a window function is applied to each segment before FFT (default False).
+        If True, a window function is applied to each segment before FFT.
     db : bool, optional
-        If True, convert FFT magnitudes to dB scale (default True).
+        If True, convert FFT magnitudes to dB scale.
     synthetic_fault_fraction : float, optional
-        Fraction (0.0 to 1.0) of normal segments to modify with synthetic faults (default 0.0).
+        Fraction (0.0 to 1.0) of normal segments to modify with synthetic faults.
     fault_types : list of str, optional
         List of possible fault types to inject (required if synthetic_fault_fraction>0).
     anomaly_injector: instance of BaseAnomalyInjector (or CompositeAnomalyInjector) to perform injection.
@@ -462,7 +462,7 @@ def count_labels(loader):
     """
     label_counts = {}
     for _, labels in loader:
-        for label in labels.numpy():
+        for label in labels.detach().cpu().numpy():
             label = int(label)
             if label in label_counts:
                 label_counts[label] += 1
