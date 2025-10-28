@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Check if environment.yml exists
-if [[ ! -f "environment.yml" ]]; then
-    echo "Error: environment.yml file not found!"
+# Check if environment.yaml exists
+if [[ ! -f "environment.yaml" ]]; then
+    echo "Error: environment.yaml file not found!"
     exit 1
 fi
 
@@ -15,14 +15,16 @@ fi
 eval "$(conda shell.bash hook)"
 
 # Create the conda environment from the YAML file
-echo "Creating conda environment from environment.yml..."
-conda env create -f environment.yml
+echo "Creating conda environment from environment.yaml..."
+conda env create -f environment.yaml
 
 # Extract the environment name from the YAML file
-ENV_NAME=$(grep 'name:' environment.yml | awk '{print $2}')
+ENV_NAME=$(grep 'name:' environment.yaml | awk '{print $2}')
 
 # Activate the environment
 echo "Activating environment: $ENV_NAME"
 conda activate "$ENV_NAME"
 
 echo "Setup complete. The $ENV_NAME environment is ready."
+
+pip install -e .

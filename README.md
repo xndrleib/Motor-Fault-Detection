@@ -21,7 +21,7 @@ This repository contains a complete workflow for detecting electric motor faults
 A Conda environment definition is provided. The included `setup.sh` script creates and activates the environment automatically:
 
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.yaml
 conda activate py311_mfd
 ```
 
