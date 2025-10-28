@@ -60,7 +60,7 @@ APPLY_WINDOW = False
 USE_DB = True
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RES_ROOT = REPO_ROOT / "dataset"
+RES_ROOT = REPO_ROOT / "res"
 FID_DIR = RES_ROOT / "fid_inputs"
 
 
