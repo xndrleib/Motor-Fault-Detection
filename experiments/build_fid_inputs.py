@@ -29,7 +29,17 @@ import pandas as pd
 
 from tqdm.auto import tqdm
 
+import yaml
+
+from src.anomaly_injector import (
+    CompositeAnomalyInjector,
+    GaussianPeakInjector,
+    NoiseInjector,
+)
 from src.data_pipeline import create_metadata_df, preprocessing, filter_segments
+from src.electrical_signature_frequencies import ANOMALY_FREQS
+
+from fid_utils import generate_sgda_windows
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -63,6 +73,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RES_ROOT = REPO_ROOT / "res"
 FID_DIR = RES_ROOT / "fid_inputs"
 
+# Default ranges for electrical fault bands used during SGDA generation
+MCSA_PARAM_OVERRIDES: Dict[str, Dict[str, object]] = {
+    "rotor bar defect": {"n_range": range(1, 4)},
+    "inter-turn short circuits": {"k_range": range(1, 4, 2), "m_range": range(0, 2)},
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -232,6 +247,65 @@ def main(
         seg_meta_df["phase"] = seg_meta_df["phase"].astype(str)
         seg_meta_df["load_condition"] = seg_meta_df["load_condition"].astype(str)
 
+        # Load engine-specific configuration for SGDA generation.
+        engine_cfg_path = engine_dir / "engine.yml"
+        if not engine_cfg_path.exists():
+            raise FileNotFoundError(f"Engine configuration not found: {engine_cfg_path}")
+        with engine_cfg_path.open("r", encoding="utf-8") as f:
+            engine_config = yaml.safe_load(f)
+
+        mcsa_cfg = engine_config.get("mcsa")
+        if mcsa_cfg is None:
+            raise KeyError("Engine configuration must include an 'mcsa' section")
+
+        fault_freqs: Dict[str, np.ndarray] = {}
+        for fault_name in FAULT_NAME_TO_CODE:
+            overrides = MCSA_PARAM_OVERRIDES.get(fault_name, {})
+            params = {"engine_config": mcsa_cfg}
+            params.update(overrides)
+            freqs_list = ANOMALY_FREQS[fault_name](**params)
+            fault_freqs[fault_name] = np.asarray(freqs_list, dtype=float)
+
+        train_cfg_name = f"train_{engine_id.replace('_', '-')}.yml"
+        train_cfg_path = REPO_ROOT / "training_configs" / train_cfg_name
+        inj_defaults = {
+            "peak_segment": 4.0,
+            "amplitude_range": (0.5, 20.0),
+            "sigma_range": (0.5, 1.5),
+            "noise_factor": 0.0,
+            "include_negative_peaks": False,
+            "random_peak_position": False,
+        }
+        if train_cfg_path.exists():
+            with train_cfg_path.open("r", encoding="utf-8") as f:
+                train_cfg = yaml.safe_load(f)
+            inj_defaults.update(train_cfg.get("processing_parameters", {}))
+        else:
+            print(f"[warn] Training config not found at {train_cfg_path}. Using SGDA defaults.", flush=True)
+
+        freq_resolution = float(freqs[1] - freqs[0]) if freqs.size > 1 else 1.0
+        peak_segment_bins = max(1, int(np.ceil(float(inj_defaults["peak_segment"]) / freq_resolution)))
+
+        amplitude_range = tuple(
+            float(v) for v in inj_defaults.get("amplitude_range", (0.5, 20.0))
+        )
+        sigma_range = tuple(
+            float(v) for v in inj_defaults.get("sigma_range", (0.5, 1.5))
+        )
+
+        gaussian_injector = GaussianPeakInjector(
+            peak_segment=peak_segment_bins,
+            amplitude_range=amplitude_range,
+            sigma_range=sigma_range,
+            negative=bool(inj_defaults.get("include_negative_peaks", False)),
+            random_peak_position=bool(inj_defaults.get("random_peak_position", False)),
+        )
+        noise_injector = NoiseInjector(noise_factor=float(inj_defaults.get("noise_factor", 0.0)))
+        composite_injector = CompositeAnomalyInjector({
+            "peak-anomaly": gaussian_injector,
+            "noise": noise_injector,
+        })
+
         phases_to_use = sorted(seg_meta_df["phase"].unique())
         target_faults = list(FAULT_NAME_TO_CODE.keys())
 
@@ -266,6 +340,7 @@ def main(
         combos = [(fn, fc, ld) for fn, fc in FAULT_NAME_TO_CODE.items() for ld in LOADS_TO_USE]
 
         saved_files = 0
+        synthetic_targets: Dict[Tuple[str, str], int] = {}
         for fault_name, fault_code, load in _progress(
             combos,
             desc=f"{engine_id}: group & save",
@@ -280,6 +355,8 @@ def main(
             key = f"{load}_{fault_code}"
             index_cache[key] = idx.tolist()
 
+            synthetic_targets[(load, fault_name)] = int(idx.size)
+
             grouped_segments = (
                 filtered_segments[idx]
                 if idx.size
@@ -293,6 +370,51 @@ def main(
             print(
                 f"[save] {out_path.name}: segments={grouped_segments.shape[0]:,} "
                 f"(load={load}, fault={fault_code})",
+                flush=True,
+            )
+
+
+        normal_mask = (
+            (seg_meta_df["state"] == "normal")
+            & seg_meta_df["load_condition"].isin(LOADS_TO_USE)
+            & seg_meta_df["phase"].isin(phases_to_use)
+        )
+        normal_meta = seg_meta_df.loc[normal_mask].reset_index()
+        normal_segments = segments[normal_mask.to_numpy()]
+
+        synth_windows, synth_indices = generate_sgda_windows(
+            normal_segments=normal_segments,
+            normal_meta=normal_meta,
+            freqs=freqs,
+            fault_freqs=fault_freqs,
+            counts=synthetic_targets,
+            injector=composite_injector,
+            rng_seed=42,
+            injector_keys=("peak-anomaly",),
+            load_column="load_condition",
+        )
+
+        for (load, fault_name), synth_array in synth_windows.items():
+            fault_code = FAULT_NAME_TO_CODE[fault_name]
+            synth_path = FID_DIR / f"synth_{load}_{fault_code}.npy"
+            np.save(synth_path, synth_array)
+
+            selection = synth_indices[(load, fault_name)]
+            selection_int = selection.astype(int, copy=False)
+            synth_meta = normal_meta.iloc[selection_int].copy()
+            synth_meta["synthetic_fault"] = fault_name
+            synth_meta["synthetic_load"] = load
+            synth_meta["source_index"] = selection_int
+            meta_path = FID_DIR / f"synth_{load}_{fault_code}_meta.csv"
+            synth_meta.to_csv(meta_path, index=False)
+
+            print(
+                f"[save] {synth_path.name}: segments={synth_array.shape[0]:,} "
+                f"(load={load}, fault={fault_code})",
+                flush=True,
+            )
+            print(
+                f"[meta] {meta_path.name}: rows={synth_meta.shape[0]:,}",
                 flush=True,
             )
 
