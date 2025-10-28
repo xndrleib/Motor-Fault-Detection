@@ -1,8 +1,19 @@
-"""Utility script to prepare real FFT windows for FID computation.
+"""
+Utility script to prepare real FFT windows for FID computation.
 
 This script (optionally) rebuilds measurement-level metadata, regenerates (or loads)
 FFT segments, filters them to the desired subset, and persists grouped windows for
 later reuse. It logs progress with prints and uses tqdm progress bars when available.
+
+Changes vs. previous version
+----------------------------
+- Writes exactly TWO consolidated metadata CSVs to the output folder:
+  * real_windows_metadata.csv     — all real windows across groups/engines
+  * synthetic_windows_metadata.csv — all synthetic windows across groups/engines
+- Does NOT write per-group synthetic metadata CSVs anymore.
+- Keeps `.npy` layout: real_<LOAD>_<FAULT>.npy and synth_<LOAD>_<FAULT>.npy
+- Keeps per-engine transparency CSV: {engine}_filtered_segments_metadata.csv
+- Keeps index_map.json for legacy mapping (optional for consumers).
 
 Examples
 --------
@@ -78,6 +89,13 @@ MCSA_PARAM_OVERRIDES: Dict[str, Dict[str, object]] = {
     "rotor bar defect": {"n_range": range(1, 4)},
     "inter-turn short circuits": {"k_range": range(1, 4, 2), "m_range": range(0, 2)},
 }
+
+# ---------------------------------------------------------------------------
+# Output filenames (consolidated metadata)
+# ---------------------------------------------------------------------------
+META_REAL_FILENAME = "real_windows_metadata.csv"
+META_SYNTH_FILENAME = "synthetic_windows_metadata.csv"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -223,9 +241,18 @@ def main(
     The function writes filtered segment groups into ``RES_ROOT / 'fid_inputs'`` and
     records an ``index_map.json`` to map group keys to row indices in the filtered
     metadata.
+
+    NEW:
+    - After processing all engines, writes exactly two consolidated metadata CSVs:
+      * real_windows_metadata.csv
+      * synthetic_windows_metadata.csv
     """
     ensure_directory(FID_DIR)
     index_cache: Dict[str, List[int]] = {}
+
+    # Accumulators for consolidated metadata (across engines)
+    all_real_meta_rows: List[pd.DataFrame] = []
+    all_synth_meta_rows: List[pd.DataFrame] = []
 
     # Make engines indexable & sized for tqdm
     engines_list = list(engines)
@@ -373,7 +400,16 @@ def main(
                 flush=True,
             )
 
+            # Consolidated REAL metadata rows for this group
+            group_meta = filtered_meta.loc[mask].copy()
+            group_meta["engine_id"] = engine_id
+            group_meta["fault_code"] = fault_code
+            group_meta["target_file"] = out_path.name
+            # Row index within the just-saved array
+            group_meta["row_in_file"] = np.arange(group_meta.shape[0], dtype=int)
+            all_real_meta_rows.append(group_meta)
 
+        # Build normals for SGDA synthesis
         normal_mask = (
             (seg_meta_df["state"] == "normal")
             & seg_meta_df["load_condition"].isin(LOADS_TO_USE)
@@ -401,20 +437,21 @@ def main(
 
             selection = synth_indices[(load, fault_name)]
             selection_int = selection.astype(int, copy=False)
+
             synth_meta = normal_meta.iloc[selection_int].copy()
+            synth_meta["engine_id"] = engine_id
             synth_meta["synthetic_fault"] = fault_name
+            synth_meta["fault_code"] = fault_code
             synth_meta["synthetic_load"] = load
             synth_meta["source_index"] = selection_int
-            meta_path = FID_DIR / f"synth_{load}_{fault_code}_meta.csv"
-            synth_meta.to_csv(meta_path, index=False)
+            synth_meta["target_file"] = synth_path.name
+            # Row index within the just-saved synthetic array
+            synth_meta["row_in_file"] = np.arange(synth_array.shape[0], dtype=int)
+            all_synth_meta_rows.append(synth_meta)
 
             print(
                 f"[save] {synth_path.name}: segments={synth_array.shape[0]:,} "
-                f"(load={load}, fault={fault_code})",
-                flush=True,
-            )
-            print(
-                f"[meta] {meta_path.name}: rows={synth_meta.shape[0]:,}",
+                f"(load={load}, fault={fault_code}) | meta rows added={synth_meta.shape[0]:,}",
                 flush=True,
             )
 
@@ -428,6 +465,24 @@ def main(
     with index_path.open("w", encoding="utf-8") as f:
         json.dump(index_cache, f, indent=2)
     print(f"\n[done] index map -> {index_path}", flush=True)
+
+    # Write consolidated REAL metadata once
+    if all_real_meta_rows:
+        real_meta_df = pd.concat(all_real_meta_rows, ignore_index=True)
+        real_meta_path = FID_DIR / META_REAL_FILENAME
+        real_meta_df.to_csv(real_meta_path, index=False)
+        print(f"[done] real metadata -> {real_meta_path} (rows={real_meta_df.shape[0]:,})", flush=True)
+    else:
+        print("[done] no real metadata rows to write", flush=True)
+
+    # Write consolidated SYNTHETIC metadata once
+    if all_synth_meta_rows:
+        synth_meta_df = pd.concat(all_synth_meta_rows, ignore_index=True)
+        synth_meta_path = FID_DIR / META_SYNTH_FILENAME
+        synth_meta_df.to_csv(synth_meta_path, index=False)
+        print(f"[done] synthetic metadata -> {synth_meta_path} (rows={synth_meta_df.shape[0]:,})", flush=True)
+    else:
+        print("[done] no synthetic metadata rows to write", flush=True)
 
 
 # ---------------------------------------------------------------------------
