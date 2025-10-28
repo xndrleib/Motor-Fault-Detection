@@ -13,9 +13,7 @@ Example
 python tools/compute_fid_table.py \
   --run-dir res/runs/2025-06-03_02-14-40_train_full-data-removeES-42-16 \
   --emb-root res/fid_embs \
-  --out-csv fid_table.csv \
-  --out-parquet fid_table.parquet \
-  --registry-csv res/fid_registry.csv
+  --out-csv fid_table.csv
 """
 
 from __future__ import annotations
@@ -183,9 +181,13 @@ def _trace_sqrt_product(C1: np.ndarray, C2: np.ndarray) -> float:
 
     Notes
     -----
-    Uses the equivalent form Tr(sqrtm(C1 @ C2)) for SPD matrices.
-    Any tiny imaginary parts from `sqrtm` are discarded, and the result
-    is re-symmetrized before taking the trace.
+    Uses the identity::
+
+        Tr( (C1^{1/2} C2 C1^{1/2})^{1/2} ) = Tr( sqrtm(C1 @ C2) )
+
+    The matrix square root is computed with `scipy.linalg.sqrtm`. Any tiny
+    imaginary parts due to round-off are discarded, and the result is
+    re-symmetrized before taking the trace.
     """
     A = C1 @ C2
     S = la.sqrtm(A)
@@ -347,114 +349,6 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
     return df
 
 
-def _save_outputs(
-    df: pd.DataFrame,
-    emb_dir: Path,
-    out_csv: Path,
-    out_parquet: Optional[Path] = None,
-) -> Path:
-    """
-    Save per-run results to CSV (and optionally Parquet).
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Results table to save.
-    emb_dir : Path
-        Directory for run's embeddings (base for relative outputs).
-    out_csv : Path
-        CSV file path (relative paths are resolved under `emb_dir`).
-    out_parquet : Path, optional
-        Parquet file path (relative paths resolved under `emb_dir`).
-
-    Returns
-    -------
-    Path
-        Resolved CSV output path on disk.
-    """
-    csv_path = out_csv if out_csv.is_absolute() else (emb_dir / out_csv)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(csv_path, index=False)
-
-    if out_parquet is not None:
-        pq_path = out_parquet if out_parquet.is_absolute() else (emb_dir / out_parquet)
-        pq_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            df.to_parquet(pq_path, index=False)  # requires pyarrow or fastparquet
-            print(f"[✓] Wrote Parquet → {pq_path}")
-        except Exception as e:
-            print(f"[warn] Failed to write Parquet at {pq_path}: {e}")
-
-    return csv_path
-
-
-def _update_registry_csv(df: pd.DataFrame, registry_csv: Path) -> None:
-    """
-    Merge current run results into a global CSV registry (idempotent on keys).
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Per-run results (must include 'run_id','fault_code','load').
-    registry_csv : Path
-        Path to a global CSV file that will aggregate all runs.
-
-    Notes
-    -----
-    Existing rows with the same ('run_id','fault_code','load') are replaced
-    by the newest data.
-    """
-    key_cols = ["run_id", "fault_code", "load"]
-    registry_csv.parent.mkdir(parents=True, exist_ok=True)
-
-    if registry_csv.exists():
-        try:
-            old = pd.read_csv(registry_csv)
-        except Exception as e:
-            print(f"[warn] Could not read existing registry {registry_csv}: {e}")
-            old = pd.DataFrame(columns=df.columns)
-        combined = pd.concat([old, df], ignore_index=True)
-        combined.drop_duplicates(subset=key_cols, keep="last", inplace=True)
-    else:
-        combined = df.copy()
-
-    combined.to_csv(registry_csv, index=False)
-    print(f"[✓] Updated registry CSV → {registry_csv} (rows={len(combined)})")
-
-
-def _update_registry_parquet(df: pd.DataFrame, registry_parquet: Path) -> None:
-    """
-    Merge current run results into a global Parquet registry.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Per-run results (must include 'run_id','fault_code','load').
-    registry_parquet : Path
-        Path to a global Parquet file that will aggregate all runs.
-
-    Notes
-    -----
-    Requires a Parquet engine (pyarrow or fastparquet). Rows are de-duplicated
-    on ('run_id','fault_code','load') keeping the last occurrence.
-    """
-    key_cols = ["run_id", "fault_code", "load"]
-    registry_parquet.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        if registry_parquet.exists():
-            old = pd.read_parquet(registry_parquet)
-            combined = pd.concat([old, df], ignore_index=True)
-            combined.drop_duplicates(subset=key_cols, keep="last", inplace=True)
-        else:
-            combined = df.copy()
-
-        combined.to_parquet(registry_parquet, index=False)
-        print(f"[✓] Updated registry Parquet → {registry_parquet} (rows={len(combined)})")
-    except Exception as e:
-        print(f"[warn] Failed to update Parquet registry at {registry_parquet}: {e}")
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", type=Path, required=True,
@@ -463,12 +357,6 @@ def main():
                     help="Root folder containing <run_id> subfolder with _embs.npy files.")
     ap.add_argument("--out-csv", type=Path, default=Path("fid_table.csv"),
                     help="CSV filename to write inside the run's embeddings folder.")
-    ap.add_argument("--out-parquet", type=Path, default=None,
-                    help="Optional Parquet filename to also write (inside the run's embeddings folder unless absolute).")
-    ap.add_argument("--registry-csv", type=Path, default=None,
-                    help="Optional path to a global CSV registry to merge this run into.")
-    ap.add_argument("--registry-parquet", type=Path, default=None,
-                    help="Optional path to a global Parquet registry to merge this run into.")
     ap.add_argument("--eps", type=float, default=1e-6,
                     help="Diagonal jitter added to covariances for numerical stability.")
     args = ap.parse_args()
@@ -476,20 +364,9 @@ def main():
     emb_dir = _discover_emb_dir(args.run_dir, args.emb_root)
     df = compute_fid_table(emb_dir, eps=float(args.eps))
 
-    csv_path = _save_outputs(
-        df=df,
-        emb_dir=emb_dir,
-        out_csv=args.out_csv,
-        out_parquet=args.out_parquet,
-    )
-    print(f"\n[✓] Wrote FID table → {csv_path}")
-
-    # Update global registries for cross-run aggregation
-    if args.registry_csv is not None:
-        _update_registry_csv(df, args.registry_csv)
-    if args.registry_parquet is not None:
-        _update_registry_parquet(df, args.registry_parquet)
-
+    out_path = emb_dir / args.out_csv
+    df.to_csv(out_path, index=False)
+    print(f"\n[✓] Wrote FID table → {out_path}")
     if len(df):
         with pd.option_context("display.max_rows", None, "display.max_columns", None):
             print("\nFID results (by fault_code, load):")

@@ -1,5 +1,4 @@
 # Code for training models
-
 import argparse
 import datetime
 import logging
@@ -7,7 +6,6 @@ import os
 import shutil
 import time
 from pathlib import Path
-from src.models import ResNet, ResidualBlock, MLP, CNN
 
 import comet_ml  # import comet_ml before the following modules: torch.
 import joblib
@@ -26,10 +24,10 @@ from src.datasets import create_balanced_datasets, FaultInjectionDataset, Augmen
 from src.electrical_signature_frequencies import ANOMALY_FREQS
 from src.evaluation import calculate_metrics
 from src.inference import inference_model
-from src.models import ResNet, ResidualBlock
+from src.models import ResNet, ResidualBlock, CNN
 from src.normalization import Normalizer
 from src.train import train_epoch_cached
-from src.utils import set_all_seeds, create_experiment_folder
+from src.utils import set_all_seeds, create_experiment_folder, load_yaml
 
 
 def setup_logger(log_dir, log_file="training.log"):
@@ -94,13 +92,6 @@ def prepare_directories(engine, config_name, res_dir="../res"):
         d.mkdir(exist_ok=True, parents=True)
     logging.info(f"Experiment directories created at {exp_dir}")
     return base_dir, exp_dir, indices_dir, checkpoints_dir, fig_dir, log_dir
-
-def load_yaml(path):
-    """Load a YAML file and return the configuration dictionary."""
-    with open(path, "r") as f:
-        data = yaml.safe_load(f)
-    logging.info(f"Loaded configuration from {path}")
-    return data
 
 def save_label_encoder(enc, exp_dir):
     """Save label encoder for later inference/analysis."""
@@ -209,7 +200,7 @@ def train_and_eval(
     # Inference on test set
     logging.info("Starting inference on test set.")
     inference_start = time.perf_counter()
-    true_labels, predictions = inference_resnet_model(model, test_loader, device=device)
+    true_labels, predictions = inference_model(model, test_loader, device=device)
     inference_end = time.perf_counter()
     inference_time = inference_end - inference_start
     logging.info(f"Inference complete. Time elapsed: {inference_time:.2f} seconds.")

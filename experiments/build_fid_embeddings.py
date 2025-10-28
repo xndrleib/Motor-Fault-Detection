@@ -14,8 +14,7 @@ python tools/compute_fid_table.py \
   --run-dir res/runs/2025-06-03_02-14-40_train_full-data-removeES-42-16 \
   --emb-root res/fid_embs \
   --out-csv fid_table.csv \
-  --out-parquet fid_table.parquet \
-  --registry-csv res/fid_registry.csv
+  --out-parquet fid_table.parquet
 """
 
 from __future__ import annotations
@@ -29,6 +28,11 @@ import pandas as pd
 from scipy import linalg as la
 
 
+# ---------------------------------------------------------------------------
+# Filename parsing
+# ---------------------------------------------------------------------------
+
+# Accept stems like: "real_40_RBD_embs.npy" or "synth_40_RBD_embs.npy"
 STEM_REGEX = re.compile(
     r"^(?P<kind>real|synth)_(?P<load>\d+)_(?P<fault>[A-Za-z0-9]+)_embs$",
     re.IGNORECASE
@@ -57,11 +61,15 @@ def _parse_stem(stem: str) -> Optional[Tuple[str, int, str]]:
     m = STEM_REGEX.match(stem)
     if not m:
         return None
-    kind = m.group("kind").lower()
+    kind = m.group("kind").lower()   # normalize: 'real' or 'synth'
     load = int(m.group("load"))
-    fault = m.group("fault").upper()
+    fault = m.group("fault").upper() # normalize fault code for grouping
     return kind, load, fault
 
+
+# ---------------------------------------------------------------------------
+# Disk layout & I/O
+# ---------------------------------------------------------------------------
 
 def _discover_emb_dir(run_dir: Path, emb_root: Path) -> Path:
     """
@@ -70,7 +78,7 @@ def _discover_emb_dir(run_dir: Path, emb_root: Path) -> Path:
     Parameters
     ----------
     run_dir : Path
-        Path to the training run directory.
+        Path to the training run directory (used only for its name).
     emb_root : Path
         Root directory containing per-run embeddings subfolders.
 
@@ -84,6 +92,7 @@ def _discover_emb_dir(run_dir: Path, emb_root: Path) -> Path:
     FileNotFoundError
         If the inferred embeddings directory does not exist.
     """
+    # We treat the run directory name as the ID, and look under emb_root/run_id
     run_id = run_dir.name
     emb_dir = emb_root / run_id
     if not emb_dir.exists():
@@ -104,6 +113,7 @@ def _load_embeddings(path: Path, cast: Optional[np.dtype] = np.float64) -> np.nd
         .npy file containing an array of shape (N, D).
     cast : numpy.dtype, optional
         If provided, cast the array to this dtype (default: float64).
+        Float64 is preferred during linear algebra for better stability.
 
     Returns
     -------
@@ -115,15 +125,19 @@ def _load_embeddings(path: Path, cast: Optional[np.dtype] = np.float64) -> np.nd
     ValueError
         If the array is not 2-D.
     """
-    arr = np.load(path)
+    arr = np.load(path)  # mmap_mode could be enabled if files are huge
     if arr.ndim != 2:
         raise ValueError(f"{path.name}: expected 2-D (N, D), got {arr.shape}")
     return arr.astype(cast, copy=False) if cast is not None else arr
 
 
+# ---------------------------------------------------------------------------
+# Small utilities
+# ---------------------------------------------------------------------------
+
 def _all_finite(X: np.ndarray) -> bool:
     """
-    Check that all entries are finite.
+    Check that all entries are finite (no NaN/Inf).
 
     Parameters
     ----------
@@ -156,8 +170,11 @@ def _covariance(X: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 
     Notes
     -----
-    Uses `ddof=1` (unbiased). The result is symmetrized and jittered.
-    Requires N >= 2.
+    - Uses `ddof=1` (unbiased) to match common FID estimators.
+    - The result is explicitly symmetrized to counter tiny asymmetries
+      from floating-point round-off.
+    - `eps * I` is added to push tiny/negative eigenvalues up to ≥ eps.
+    - Requires N >= 2; otherwise covariance is undefined.
     """
     if X.shape[0] < 2:
         raise ValueError("Need at least 2 samples to compute covariance.")
@@ -179,21 +196,35 @@ def _trace_sqrt_product(C1: np.ndarray, C2: np.ndarray) -> float:
     Returns
     -------
     float
-        Trace of the positive semidefinite square root.
+        Trace of the positive semidefinite square root (cross term in FID).
 
     Notes
     -----
-    Uses the equivalent form Tr(sqrtm(C1 @ C2)) for SPD matrices.
-    Any tiny imaginary parts from `sqrtm` are discarded, and the result
-    is re-symmetrized before taking the trace.
+    - In practice, FID codebases compute `Tr(sqrtm(C1 @ C2))`. This matches
+      the symmetric expression for well-conditioned SPD matrices and is the
+      standard implementation used in the literature and open-source tools.
+    - `sqrtm` may return a complex matrix due to numerical noise; we take
+      the real part (imaginary components should be ~1e-10) and re-symmetrize
+      before taking the trace.
     """
+    # Form the product once; avoids repeated square roots
     A = C1 @ C2
+
+    # Matrix principal square root via SciPy (stable, battle-tested)
     S = la.sqrtm(A)
+
+    # Discard tiny imaginary parts from rounding, then re-symmetrize
     if np.iscomplexobj(S):
         S = S.real
     S = (S + S.T) * 0.5
+
+    # The cross term is the trace of that sqrt
     return float(np.trace(S))
 
+
+# ---------------------------------------------------------------------------
+# Core metric
+# ---------------------------------------------------------------------------
 
 def fid_between(real: np.ndarray, synth: np.ndarray, eps: float = 1e-6) -> float:
     """
@@ -220,28 +251,42 @@ def fid_between(real: np.ndarray, synth: np.ndarray, eps: float = 1e-6) -> float
 
         ||μ_r - μ_s||^2 + Tr(C_r + C_s - 2 * (C_r^{1/2} C_s C_r^{1/2})^{1/2})
 
-    with unbiased covariance estimates (ddof=1).
+    with unbiased covariance estimates (`ddof=1`).
     """
-    # Early guards
+    # --- Early guards prevent confusing crashes and ensure comparability ---
     if real.ndim != 2 or synth.ndim != 2:
         return float("nan")
     Nr, Dr = real.shape
     Ns, Ds = synth.shape
     if Nr < 2 or Ns < 2 or Dr != Ds:
+        # Not enough samples or mismatched embedding dimensions
         return float("nan")
     if not _all_finite(real) or not _all_finite(synth):
+        # NaN/Inf propagates badly through covariance/sqrtm
         return float("nan")
 
+    # --- First moments (means) ---
+    # Use float64 accumulation explicitly to minimize cancellation error
     mu_r = real.mean(axis=0, dtype=np.float64)
     mu_s = synth.mean(axis=0, dtype=np.float64)
+
+    # --- Second moments (covariances) ---
     Cr = _covariance(real, eps=eps)
     Cs = _covariance(synth, eps=eps)
 
+    # --- Assemble FID ---
     mean_term = float(np.sum((mu_r - mu_s) ** 2))
     cross_trace = _trace_sqrt_product(Cr, Cs)
+
     fid = mean_term + float(np.trace(Cr + Cs)) - 2.0 * cross_trace
+
+    # FID is ≥ 0 in theory; guard against tiny negative due to round-off
     return float(max(fid, 0.0))
 
+
+# ---------------------------------------------------------------------------
+# Directory scanning & per-run computation
+# ---------------------------------------------------------------------------
 
 def build_pairs(emb_dir: Path) -> Dict[Tuple[str, int], Dict[str, Path]]:
     """
@@ -256,7 +301,7 @@ def build_pairs(emb_dir: Path) -> Dict[Tuple[str, int], Dict[str, Path]]:
     -------
     dict
         Mapping `(fault_code, load)` → `{'real': Path, 'synth': Path}` for
-        any present files (keys only exist when those kinds are present).
+        any present files (keys exist only when those kinds are present).
     """
     pairs: Dict[Tuple[str, int], Dict[str, Path]] = {}
     for p in sorted(emb_dir.glob("*_embs.npy")):
@@ -296,12 +341,13 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
         real_p = d.get("real")
         synth_p = d.get("synth")
 
+        # Ensure both sides of the pair exist; otherwise we cannot compare
         if real_p is None or synth_p is None:
             missing = ", ".join(x for x, pth in (("real", real_p), ("synth", synth_p)) if pth is None)
             print(f"[skip] Missing {missing} for ({fault}, load={load})")
             continue
 
-        # Load embeddings
+        # Load embedding matrices as float64 for robust linear algebra
         try:
             R = _load_embeddings(real_p, cast=np.float64)
             S = _load_embeddings(synth_p, cast=np.float64)
@@ -309,13 +355,13 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
             print(f"[skip] Failed to load pair ({fault}, {load}): {e}")
             continue
 
-        # Prepare row metadata
+        # Extract simple metadata for the result row
         n_real = int(R.shape[0]) if R.ndim == 2 else 0
         n_synth = int(S.shape[0]) if S.ndim == 2 else 0
         dim = int(R.shape[1]) if (R.ndim == 2 and R.shape[0] > 0) else (
               int(S.shape[1]) if (S.ndim == 2 and S.shape[0] > 0) else 0)
 
-        # Early guards (empties, dims, non-finite)
+        # Early guards replicated here for clearer user feedback
         if n_real < 2 or n_synth < 2:
             print(f"[skip] Too few samples for ({fault}, load={load}): n_real={n_real}, n_synth={n_synth}")
             fid = float("nan")
@@ -327,6 +373,7 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
             print(f"[skip] Non-finite values for ({fault}, load={load})")
             fid = float("nan")
         else:
+            # Happy path: compute FID
             fid = fid_between(R, S, eps=eps)
 
         rows.append({
@@ -339,6 +386,7 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
             "fid": fid,
         })
 
+    # Return an empty, typed frame if nothing was computable
     if not rows:
         return pd.DataFrame(columns=["run_id","fault_code","load","n_real","n_synth","dim","fid"])
 
@@ -347,12 +395,16 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
     return df
 
 
+# ---------------------------------------------------------------------------
+# Persistence helpers (per-run only)
+# ---------------------------------------------------------------------------
+
 def _save_outputs(
     df: pd.DataFrame,
     emb_dir: Path,
     out_csv: Path,
     out_parquet: Optional[Path] = None,
-) -> Path:
+) -> Tuple[Path, Optional[Path]]:
     """
     Save per-run results to CSV (and optionally Parquet).
 
@@ -361,7 +413,7 @@ def _save_outputs(
     df : pandas.DataFrame
         Results table to save.
     emb_dir : Path
-        Directory for run's embeddings (base for relative outputs).
+        Directory for this run's embeddings (base for relative outputs).
     out_csv : Path
         CSV file path (relative paths are resolved under `emb_dir`).
     out_parquet : Path, optional
@@ -369,91 +421,35 @@ def _save_outputs(
 
     Returns
     -------
-    Path
-        Resolved CSV output path on disk.
+    (Path, Path or None)
+        Resolved CSV path and (optional) Parquet path actually written.
     """
+    # Resolve relative paths under the run's embedding directory
     csv_path = out_csv if out_csv.is_absolute() else (emb_dir / out_csv)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(csv_path, index=False)
 
+    pq_written: Optional[Path] = None
     if out_parquet is not None:
         pq_path = out_parquet if out_parquet.is_absolute() else (emb_dir / out_parquet)
         pq_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            df.to_parquet(pq_path, index=False)  # requires pyarrow or fastparquet
-            print(f"[✓] Wrote Parquet → {pq_path}")
-        except Exception as e:
-            print(f"[warn] Failed to write Parquet at {pq_path}: {e}")
-
-    return csv_path
-
-
-def _update_registry_csv(df: pd.DataFrame, registry_csv: Path) -> None:
-    """
-    Merge current run results into a global CSV registry (idempotent on keys).
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Per-run results (must include 'run_id','fault_code','load').
-    registry_csv : Path
-        Path to a global CSV file that will aggregate all runs.
-
-    Notes
-    -----
-    Existing rows with the same ('run_id','fault_code','load') are replaced
-    by the newest data.
-    """
-    key_cols = ["run_id", "fault_code", "load"]
-    registry_csv.parent.mkdir(parents=True, exist_ok=True)
-
-    if registry_csv.exists():
-        try:
-            old = pd.read_csv(registry_csv)
-        except Exception as e:
-            print(f"[warn] Could not read existing registry {registry_csv}: {e}")
-            old = pd.DataFrame(columns=df.columns)
-        combined = pd.concat([old, df], ignore_index=True)
-        combined.drop_duplicates(subset=key_cols, keep="last", inplace=True)
     else:
-        combined = df.copy()
+        pq_path = csv_path.stem + '.parquet'
 
-    combined.to_csv(registry_csv, index=False)
-    print(f"[✓] Updated registry CSV → {registry_csv} (rows={len(combined)})")
-
-
-def _update_registry_parquet(df: pd.DataFrame, registry_parquet: Path) -> None:
-    """
-    Merge current run results into a global Parquet registry.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Per-run results (must include 'run_id','fault_code','load').
-    registry_parquet : Path
-        Path to a global Parquet file that will aggregate all runs.
-
-    Notes
-    -----
-    Requires a Parquet engine (pyarrow or fastparquet). Rows are de-duplicated
-    on ('run_id','fault_code','load') keeping the last occurrence.
-    """
-    key_cols = ["run_id", "fault_code", "load"]
-    registry_parquet.parent.mkdir(parents=True, exist_ok=True)
-
+    # Parquet requires a backend (pyarrow or fastparquet). If not available,
+    # we keep going; CSV already contains the results.
     try:
-        if registry_parquet.exists():
-            old = pd.read_parquet(registry_parquet)
-            combined = pd.concat([old, df], ignore_index=True)
-            combined.drop_duplicates(subset=key_cols, keep="last", inplace=True)
-        else:
-            combined = df.copy()
-
-        combined.to_parquet(registry_parquet, index=False)
-        print(f"[✓] Updated registry Parquet → {registry_parquet} (rows={len(combined)})")
+        df.to_parquet(pq_path, index=False)
+        pq_written = pq_path
     except Exception as e:
-        print(f"[warn] Failed to update Parquet registry at {registry_parquet}: {e}")
+        print(f"[warn] Failed to write Parquet at {pq_path}: {e}")
 
+    return csv_path, pq_written
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
@@ -462,34 +458,31 @@ def main():
     ap.add_argument("--emb-root", type=Path, default=Path("res/fid_embs"),
                     help="Root folder containing <run_id> subfolder with _embs.npy files.")
     ap.add_argument("--out-csv", type=Path, default=Path("fid_table.csv"),
-                    help="CSV filename to write inside the run's embeddings folder.")
+                    help="CSV filename to write (relative to the run's embeddings folder unless absolute).")
     ap.add_argument("--out-parquet", type=Path, default=None,
-                    help="Optional Parquet filename to also write (inside the run's embeddings folder unless absolute).")
-    ap.add_argument("--registry-csv", type=Path, default=None,
-                    help="Optional path to a global CSV registry to merge this run into.")
-    ap.add_argument("--registry-parquet", type=Path, default=None,
-                    help="Optional path to a global Parquet registry to merge this run into.")
+                    help="Optional Parquet filename to also write (relative to the run's embeddings folder unless absolute).")
     ap.add_argument("--eps", type=float, default=1e-6,
                     help="Diagonal jitter added to covariances for numerical stability.")
     args = ap.parse_args()
 
+    # Locate embeddings for this run and compute the table
     emb_dir = _discover_emb_dir(args.run_dir, args.emb_root)
     df = compute_fid_table(emb_dir, eps=float(args.eps))
 
-    csv_path = _save_outputs(
+    # Persist results (CSV always; Parquet optionally)
+    csv_path, pq_path = _save_outputs(
         df=df,
         emb_dir=emb_dir,
         out_csv=args.out_csv,
         out_parquet=args.out_parquet,
     )
-    print(f"\n[✓] Wrote FID table → {csv_path}")
 
-    # Update global registries for cross-run aggregation
-    if args.registry_csv is not None:
-        _update_registry_csv(df, args.registry_csv)
-    if args.registry_parquet is not None:
-        _update_registry_parquet(df, args.registry_parquet)
+    # Friendly summary with resolved paths
+    print(f"\n[✓] Wrote FID CSV  → {csv_path}")
+    if pq_path is not None:
+        print(f"[✓] Wrote FID Parquet → {pq_path}")
 
+    # Pretty-print a compact view to stdout for quick inspection
     if len(df):
         with pd.option_context("display.max_rows", None, "display.max_columns", None):
             print("\nFID results (by fault_code, load):")

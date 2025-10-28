@@ -1,3 +1,4 @@
+# utils.py
 import numpy as np
 import shutil
 import os
@@ -5,6 +6,8 @@ import random
 from pathlib import Path
 import torch
 import datetime
+import yaml
+
 
 def set_all_seeds(seed=42):
     random.seed(seed)
@@ -184,3 +187,20 @@ def generate_induction_motor_signal(
             noisy_signal[spike_index:spike_index + 10] += np.random.normal(scale=3.0, size=10)
     
     return clean_signal, noisy_signal
+
+
+def load_yaml(path):
+    """Load a YAML file and return the configuration dictionary."""
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+    print(f"Loaded configuration from {path}")
+    return data
+
+def get_run(run_path: Path):
+    run_cfg = load_yaml(run_path / 'training_config.yaml')
+    print(run_cfg)
+
+
+if __name__ == '__main__':
+    path = Path('res/runs/2025-06-03_02-14-40_train_full-data-removeES-42-16')
+    get_run(path)

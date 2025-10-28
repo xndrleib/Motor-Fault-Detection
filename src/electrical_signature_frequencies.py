@@ -1,3 +1,4 @@
+# electrical_signature_frequencies.py
 import math
 from decimal import Decimal, getcontext
 from typing import Dict, List
