@@ -25,7 +25,7 @@ from src.data_pipeline import preprocessing, make_importance_mask, filter_segmen
 from src.datasets import create_balanced_datasets, FaultInjectionDataset, AugmentedPoolDataset, HybridAugFaultDataset
 from src.electrical_signature_frequencies import ANOMALY_FREQS
 from src.evaluation import calculate_metrics
-from src.inference import inference_resnet_model
+from src.inference import inference_model
 from src.models import ResNet, ResidualBlock
 from src.normalization import Normalizer
 from src.train import train_epoch_cached
