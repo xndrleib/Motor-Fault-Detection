@@ -48,7 +48,7 @@ import torch
 import torch.nn as nn
 import yaml
 
-# Repo-local imports – adapt if your package path differs.
+# Repo-local imports
 from src.models import CNN, ResNet, ResidualBlock, MLP
 from src.normalization import Normalizer
 
