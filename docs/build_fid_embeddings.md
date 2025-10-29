@@ -1,4 +1,4 @@
-# `embed_fid_from_run.py` — Documentation
+# `build_fid_embeddings.py` — Documentation
 
 ## 1) Purpose
 
@@ -17,7 +17,7 @@ These embeddings are then ready for downstream FID computation (e.g., per cluste
 ## 2) Quick start
 
 ```bash
-python tools/embed_fid_from_run.py \
+python experiments/build_fid_embeddings.py \
   --run-dir res/runs/2025-06-03_02-14-40_train_full-data-removeES-42-16 \
   --fid-dir res/fid_inputs \
   --out-root res/fid_embs \
@@ -239,7 +239,7 @@ Run-time skips:
 #    ... (2D arrays shaped (N, L))
 
 # 3) Run:
-python tools/embed_fid_from_run.py \
+python experiments/build_fid_embeddings.py \
   --run-dir res/runs/<run_id> \
   --fid-dir res/fid_inputs \
   --out-root res/fid_embs \
