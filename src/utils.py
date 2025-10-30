@@ -1,11 +1,12 @@
 # utils.py
-import numpy as np
-import shutil
+import datetime
 import os
 import random
+import shutil
 from pathlib import Path
+
+import numpy as np
 import torch
-import datetime
 import yaml
 
 
@@ -17,6 +18,7 @@ def set_all_seeds(seed=42):
         torch.cuda.manual_seed_all(seed)
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         torch.mps.manual_seed(seed)
+
 
 def create_experiment_folder(base_dir="../res", exp_name="engine_1"):
     # e.g., res/2024-05-21_15-03-25_engine_1/
@@ -39,13 +41,17 @@ def save_best(model, epoch, metric, mode, out_dir):
     out_dir.mkdir(parents=True, exist_ok=True)
     fname = out_dir / f"best_{mode}.pth"
 
-    torch.save({
-        "epoch":  epoch,
-        "metric": metric,
-        "state":  model.state_dict(),
-    }, fname)
+    torch.save(
+        {
+            "epoch": epoch,
+            "metric": metric,
+            "state": model.state_dict(),
+        },
+        fname,
+    )
 
     print(f"[✓]   New best ({mode}) saved →  {fname}  (metric={metric:.4f})")
+
 
 def dataloader_to_numpy(dataloader):
     """
@@ -69,11 +75,12 @@ def dataloader_to_numpy(dataloader):
 
 
 def zip_folder(folder_path, zip_path):
-    shutil.make_archive(zip_path, 'zip', folder_path)
+    shutil.make_archive(zip_path, "zip", folder_path)
+
 
 def move_random_csv_files(input_dir, output_dir, n_files):
     """
-    Randomly selects a specified number of .csv files from the input directory 
+    Randomly selects a specified number of .csv files from the input directory
     and moves them to the output directory. If the output directory does not exist,
     it will be created automatically.
 
@@ -81,25 +88,27 @@ def move_random_csv_files(input_dir, output_dir, n_files):
     input_dir (str): The path to the directory containing the .csv files to be moved.
     output_dir (str): The path to the destination directory where the selected files will be moved.
     n_files (int): The number of .csv files to randomly select and move.
-    
+
     Returns:
     list: A list of the moved file names.
     """
-    
+
     # Create the output directory if it doesn't exist
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    
+
     # List all files in the input directory that end with .csv
-    csv_files = [file for file in os.listdir(input_dir) if file.endswith('.csv')]
-    
+    csv_files = [file for file in os.listdir(input_dir) if file.endswith(".csv")]
+
     # Check if there are enough files to select from
     if n_files > len(csv_files):
-        raise ValueError(f"Requested {n_files} files, but only found {len(csv_files)} .csv files in {input_dir}.")
+        raise ValueError(
+            f"Requested {n_files} files, but only found {len(csv_files)} .csv files in {input_dir}."
+        )
 
     # Randomly select n_files from the list of .csv files
     selected_files = random.sample(csv_files, n_files)
-    
+
     # Move each selected file to the output directory
     moved_files = []
     for file_name in selected_files:
@@ -109,6 +118,7 @@ def move_random_csv_files(input_dir, output_dir, n_files):
         moved_files.append(file_name)
 
     return moved_files
+
 
 def rename_folder(current_folder_path, new_folder_path):
     """
@@ -126,6 +136,7 @@ def rename_folder(current_folder_path, new_folder_path):
     except Exception as e:
         return f"An error occurred: {e}"
 
+
 def generate_induction_motor_signal(
     signal_length=1000,
     sampling_rate=1000,
@@ -134,11 +145,11 @@ def generate_induction_motor_signal(
     add_harmonics=True,
     add_spikes=True,
     add_noise=True,
-    add_modulation=True
+    add_modulation=True,
 ):
     """
     Generate a synthetic signal simulating induction motor current with selectable problems.
-    
+
     Parameters:
         signal_length (int): Number of samples in the signal.
         sampling_rate (int): Sampling rate in Hz.
@@ -148,44 +159,50 @@ def generate_induction_motor_signal(
         add_spikes (bool): If True, introduces transient spikes.
         add_noise (bool): If True, adds Gaussian noise.
         add_modulation (bool): If True, applies amplitude modulation.
-    
+
     Returns:
         tuple: (clean_signal, noisy_signal)
             - clean_signal: The base signal without any disturbances.
             - noisy_signal: The signal with selected disturbances added.
     """
     t = np.linspace(0, signal_length / sampling_rate, signal_length)
-    
+
     # Fundamental signal
     fundamental = np.sin(2 * np.pi * fundamental_freq * t)
-    
+
     # Harmonics
     harmonics = (
-        0.1 * np.sin(2 * np.pi * 2 * fundamental_freq * t) +
-        0.1 * np.sin(2 * np.pi * 3 * fundamental_freq * t) +
-        0.1 * np.sin(2 * np.pi * 4 * fundamental_freq * t)
-    ) if add_harmonics else 0
-    
+        (
+            0.1 * np.sin(2 * np.pi * 2 * fundamental_freq * t)
+            + 0.1 * np.sin(2 * np.pi * 3 * fundamental_freq * t)
+            + 0.1 * np.sin(2 * np.pi * 4 * fundamental_freq * t)
+        )
+        if add_harmonics
+        else 0
+    )
+
     # Amplitude modulation
     modulation = (1 + 0.1 * np.sin(2 * np.pi * 0.5 * t)) if add_modulation else 1
-    
+
     # Combine base signal
     clean_signal = modulation * (fundamental + harmonics)
-    
+
     # Initialize noisy signal
     noisy_signal = clean_signal.copy()
-    
+
     # Gaussian noise
     if add_noise:
         noise = np.random.normal(scale=noise_scale, size=signal_length)
         noisy_signal += noise
-    
-    # Transient spikes 
+
+    # Transient spikes
     if add_spikes:
         for _ in range(5):  # Introduce 5 random spikes
             spike_index = np.random.randint(0, signal_length)
-            noisy_signal[spike_index:spike_index + 10] += np.random.normal(scale=3.0, size=10)
-    
+            noisy_signal[spike_index : spike_index + 10] += np.random.normal(
+                scale=3.0, size=10
+            )
+
     return clean_signal, noisy_signal
 
 
@@ -196,11 +213,12 @@ def load_yaml(path):
     print(f"Loaded configuration from {path}")
     return data
 
+
 def get_run(run_path: Path):
-    run_cfg = load_yaml(run_path / 'training_config.yaml')
+    run_cfg = load_yaml(run_path / "training_config.yaml")
     print(run_cfg)
 
 
-if __name__ == '__main__':
-    path = Path('res/runs/2025-06-03_02-14-40_train_full-data-removeES-42-16')
+if __name__ == "__main__":
+    path = Path("res/runs/2025-06-03_02-14-40_train_full-data-removeES-42-16")
     get_run(path)

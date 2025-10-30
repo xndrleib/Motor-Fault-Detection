@@ -1,6 +1,7 @@
+from typing import Callable, Dict, Optional, Tuple, List
+
 import numpy as np
 import scipy.signal as sp_signal
-from typing import Callable, Dict, Optional, Tuple, List
 
 from src.electrical_signature_frequencies import ANOMALY_FREQS as ANOMALY_FREQS_ELECTRO
 
@@ -35,8 +36,14 @@ def get_anomaly_score(
     matched_anomaly_freqs = []
 
     for anomaly_freq in anomaly_freqs:
-        neighbors_indices = [i for i in range(freqs.shape[0]) if abs(freqs[i] - anomaly_freq) < max_peak_distance_hz]
-        neighboring_peaks = [i for i, peak in enumerate(peaks) if peak in neighbors_indices]
+        neighbors_indices = [
+            i
+            for i in range(freqs.shape[0])
+            if abs(freqs[i] - anomaly_freq) < max_peak_distance_hz
+        ]
+        neighboring_peaks = [
+            i for i, peak in enumerate(peaks) if peak in neighbors_indices
+        ]
 
         if not neighboring_peaks:
             continue
@@ -82,7 +89,11 @@ def detect(
     """
     results = {
         anomaly_type: get_anomaly_score(
-            freqs, signal, anomaly_freqs_fn(engine_config), max_peak_distance_hz, thresh_dict.get(anomaly_type, 0)
+            freqs,
+            signal,
+            anomaly_freqs_fn(engine_config),
+            max_peak_distance_hz,
+            thresh_dict.get(anomaly_type, 0),
         )
         for anomaly_type, anomaly_freqs_fn in anomaly_freqs_dict.items()
     }
@@ -113,29 +124,46 @@ def detect_electro(
     Returns:
         Dictionary of detected anomalies with scores and locations.
     """
-    return detect(freqs, signal, engine_config, ANOMALY_FREQS_ELECTRO, max_peak_distance_hz, thresh_dict)
+    return detect(
+        freqs,
+        signal,
+        engine_config,
+        ANOMALY_FREQS_ELECTRO,
+        max_peak_distance_hz,
+        thresh_dict,
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # python src/baseline_detection/anomaly_detection.py "data/raw/холостой ход 11 01.txt" LIMAN
     from src.data_pipeline import read_oscilloscope_data, time_to_freq_transform
-    
+
     import argparse
     import json
     import os
     import yaml
     import noisereduce as nr
 
-    CONFIGS_DIR = 'engine_configs'    
+    CONFIGS_DIR = "engine_configs"
 
-    configs = [x.split('.')[0] for x in os.listdir(CONFIGS_DIR) if 'yml' in x]
+    configs = [x.split(".")[0] for x in os.listdir(CONFIGS_DIR) if "yml" in x]
 
-    parser = argparse.ArgumentParser(description='anomalies detector')
-    parser.add_argument('filename', type=str)
-    parser.add_argument('config', type=str, choices=configs)
-    parser.add_argument('--max_peak_distance_Hz', type=float, default=0.5)
-    parser.add_argument('--cut_freq_Hz', type=float, default=200, help='Cut all frequencies above the value')
-    parser.add_argument('--noise_reduction', type=bool, default=True, help='Enable noise reduction of the original signal')
+    parser = argparse.ArgumentParser(description="anomalies detector")
+    parser.add_argument("filename", type=str)
+    parser.add_argument("config", type=str, choices=configs)
+    parser.add_argument("--max_peak_distance_Hz", type=float, default=0.5)
+    parser.add_argument(
+        "--cut_freq_Hz",
+        type=float,
+        default=200,
+        help="Cut all frequencies above the value",
+    )
+    parser.add_argument(
+        "--noise_reduction",
+        type=bool,
+        default=True,
+        help="Enable noise reduction of the original signal",
+    )
 
     args = parser.parse_args()
 
@@ -143,12 +171,14 @@ if __name__ == '__main__':
         engine_config = yaml.safe_load(stream)
 
     df = read_oscilloscope_data(args.filename)
-    f_sampling = engine_config['f_sampling']
+    f_sampling = engine_config["f_sampling"]
 
     if args.noise_reduction:
-        df['Data'] = nr.reduce_noise(df['Data'], int(f_sampling))
+        df["Data"] = nr.reduce_noise(df["Data"], int(f_sampling))
 
     yf, freqs = time_to_freq_transform(df, f_sampling, args.cut_freq_Hz)
 
-    preds = detect_electro(freqs, yf, engine_config, max_peak_distance_hz=args.max_peak_distance_Hz)
+    preds = detect_electro(
+        freqs, yf, engine_config, max_peak_distance_hz=args.max_peak_distance_Hz
+    )
     print(json.dumps(preds, ensure_ascii=False))

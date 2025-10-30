@@ -24,14 +24,14 @@ def inference_model(model, test_loader, device):
     idx = 0
 
     with torch.no_grad():
-        for inputs, labels in tqdm(test_loader, desc='Inference', unit='batch'):
+        for inputs, labels in tqdm(test_loader, desc="Inference", unit="batch"):
             inputs = inputs.to(device)
             outputs = model(inputs)
             _, preds = torch.max(outputs, 1)
 
             batch_size = labels.size(0)
-            all_labels[idx:idx + batch_size] = labels.cpu().numpy()
-            all_predictions[idx:idx + batch_size] = preds.cpu().numpy()
+            all_labels[idx : idx + batch_size] = labels.cpu().numpy()
+            all_predictions[idx : idx + batch_size] = preds.cpu().numpy()
             idx += batch_size
 
     return all_labels, all_predictions

@@ -65,7 +65,6 @@ import numpy as np
 import pandas as pd
 from scipy import linalg as la
 
-
 # =============================================================================
 # Parsing utilities
 # =============================================================================
@@ -186,6 +185,7 @@ def _all_finite(X: np.ndarray) -> bool:
 # =============================================================================
 # Linear algebra (FID components)
 # =============================================================================
+
 
 def _covariance(X: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     """
@@ -308,6 +308,7 @@ def fid_between(real: np.ndarray, synth: np.ndarray, eps: float = 1e-6) -> float
 # File discovery & pairing
 # =============================================================================
 
+
 def build_pairs(emb_dir: Path) -> Dict[Tuple[str, int], Dict[str, Path]]:
     """
     Pair available embeddings by (fault, load).
@@ -388,6 +389,7 @@ def build_synth_map(emb_dir: Path) -> Dict[Tuple[str, int], Path]:
 # FID table (per fault, per load)
 # =============================================================================
 
+
 def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
     """
     Compute FID per (fault, load) for available real/synth pairs.
@@ -438,16 +440,24 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
         # Meta for reporting
         n_real = int(R.shape[0])
         n_synth = int(S.shape[0])
-        dim = int(R.shape[1]) if R.shape[0] > 0 else (int(S.shape[1]) if S.shape[0] > 0 else 0)
+        dim = (
+            int(R.shape[1])
+            if R.shape[0] > 0
+            else (int(S.shape[1]) if S.shape[0] > 0 else 0)
+        )
 
         # Guardrails and compute
         if n_real < 2 or n_synth < 2:
             fid = float("nan")
-            print(f"[skip] Too few samples for ({fault}, load={load}): n_real={n_real}, n_synth={n_synth}")
+            print(
+                f"[skip] Too few samples for ({fault}, load={load}): n_real={n_real}, n_synth={n_synth}"
+            )
         elif R.shape[1] != S.shape[1]:
             fid = float("nan")
             dim = np.nan
-            print(f"[skip] Dim mismatch for ({fault}, load={load}): real D={R.shape[1]} vs synth D={S.shape[1]}")
+            print(
+                f"[skip] Dim mismatch for ({fault}, load={load}): real D={R.shape[1]} vs synth D={S.shape[1]}"
+            )
         elif not (_all_finite(R) and _all_finite(S)):
             fid = float("nan")
             print(f"[skip] Non-finite values for ({fault}, load={load})")
@@ -467,7 +477,9 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
         )
 
     if not rows:
-        return pd.DataFrame(columns=["run_id", "fault_code", "load", "n_real", "n_synth", "dim", "fid"])
+        return pd.DataFrame(
+            columns=["run_id", "fault_code", "load", "n_real", "n_synth", "dim", "fid"]
+        )
 
     df = pd.DataFrame(rows)
     df.sort_values(by=["fault_code", "load"], inplace=True, ignore_index=True)
@@ -478,7 +490,10 @@ def compute_fid_table(emb_dir: Path, eps: float = 1e-6) -> pd.DataFrame:
 # nFID computation (RR floor + configurable negative baselines)
 # =============================================================================
 
-def _split_half_rr(X: np.ndarray, rng: np.random.Generator) -> Tuple[np.ndarray, np.ndarray]:
+
+def _split_half_rr(
+    X: np.ndarray, rng: np.random.Generator
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Create a randomized split-half partition of rows.
 
@@ -502,7 +517,9 @@ def _split_half_rr(X: np.ndarray, rng: np.random.Generator) -> Tuple[np.ndarray,
     return X[idx[:mid]], X[idx[mid:]]
 
 
-def _fid_rr_baseline(R: np.ndarray, repeats: int, rng: np.random.Generator, eps: float) -> float:
+def _fid_rr_baseline(
+    R: np.ndarray, repeats: int, rng: np.random.Generator, eps: float
+) -> float:
     """
     Estimate real↔real split-half baseline (FID_RR) via repeats.
 
@@ -622,19 +639,31 @@ def _fid_negative_baseline(
 
     # Select anchor and candidate set according to the chosen mode
     if mode == "real-other-fault":
-        anchor = _get_cached(key_f, "real", real_map=real_map, synth_map=synth_map, cache=cache)
+        anchor = _get_cached(
+            key_f, "real", real_map=real_map, synth_map=synth_map, cache=cache
+        )
         candidates_keys = [
-            ("real", (g, load)) for (g, ld) in real_map.keys() if ld == load and g != fault
+            ("real", (g, load))
+            for (g, ld) in real_map.keys()
+            if ld == load and g != fault
         ]
     elif mode == "real-synth-other-fault":
-        anchor = _get_cached(key_f, "real", real_map=real_map, synth_map=synth_map, cache=cache)
+        anchor = _get_cached(
+            key_f, "real", real_map=real_map, synth_map=synth_map, cache=cache
+        )
         candidates_keys = [
-            ("synth", (g, load)) for (g, ld) in synth_map.keys() if ld == load and g != fault
+            ("synth", (g, load))
+            for (g, ld) in synth_map.keys()
+            if ld == load and g != fault
         ]
     elif mode == "synth-other-fault":
-        anchor = _get_cached(key_f, "synth", real_map=real_map, synth_map=synth_map, cache=cache)
+        anchor = _get_cached(
+            key_f, "synth", real_map=real_map, synth_map=synth_map, cache=cache
+        )
         candidates_keys = [
-            ("synth", (g, load)) for (g, ld) in synth_map.keys() if ld == load and g != fault
+            ("synth", (g, load))
+            for (g, ld) in synth_map.keys()
+            if ld == load and g != fault
         ]
     else:
         raise ValueError(f"Unknown neg-baseline: {mode}")
@@ -644,7 +673,9 @@ def _fid_negative_baseline(
 
     fids: List[float] = []
     for kind_other, key_other in candidates_keys:
-        other = _get_cached(key_other, kind_other, real_map=real_map, synth_map=synth_map, cache=cache)
+        other = _get_cached(
+            key_other, kind_other, real_map=real_map, synth_map=synth_map, cache=cache
+        )
         if other is None:
             continue
         fids.append(fid_between(anchor, other, eps=eps))
@@ -750,8 +781,14 @@ def compute_nfid_table_wide(
         # Floor (RR): split-half real vs real within (fault, load)
         key = (fault, load)
         if key in real_map:
-            R = _get_cached(key, "real", real_map=real_map, synth_map=synth_map, cache=cache)
-            fid_rr = _fid_rr_baseline(R, repeats=rr_repeats, rng=rng, eps=eps) if R is not None else float("nan")
+            R = _get_cached(
+                key, "real", real_map=real_map, synth_map=synth_map, cache=cache
+            )
+            fid_rr = (
+                _fid_rr_baseline(R, repeats=rr_repeats, rng=rng, eps=eps)
+                if R is not None
+                else float("nan")
+            )
         else:
             fid_rr = float("nan")
 
@@ -780,7 +817,12 @@ def compute_nfid_table_wide(
             )
             tag = mode_tags[mode]
             rec[f"fid_rw__{tag}"] = rw
-            if np.isfinite(fid) and np.isfinite(fid_rr) and np.isfinite(rw) and (rw - fid_rr) > 1e-12:
+            if (
+                np.isfinite(fid)
+                and np.isfinite(fid_rr)
+                and np.isfinite(rw)
+                and (rw - fid_rr) > 1e-12
+            ):
                 rec[f"nfid__{tag}"] = (fid - fid_rr) / (rw - fid_rr)
             else:
                 rec[f"nfid__{tag}"] = float("nan")
@@ -794,6 +836,7 @@ def compute_nfid_table_wide(
 # =============================================================================
 # CLI
 # =============================================================================
+
 
 def main() -> None:
     """
@@ -879,7 +922,7 @@ def main() -> None:
         rr_repeats=int(args.rr_repeats),
         seed=int(args.seed),
         eps=float(args.eps),
-        neg_baselines=modes,                # None -> all modes (normalized inside)
+        neg_baselines=modes,  # None -> all modes (normalized inside)
         neg_percentile=float(args.neg_percentile),
     )
 

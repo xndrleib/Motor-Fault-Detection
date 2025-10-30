@@ -29,6 +29,7 @@ Limit to a subset of engines:
 
     python prepare_fid_windows.py --engines engine_2 engine_5
 """
+
 import argparse
 import json
 import time
@@ -37,11 +38,10 @@ from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
-
+import yaml
 from tqdm.auto import tqdm
 
-import yaml
-
+from fid_utils import generate_sgda_windows
 from src.anomaly_injector import (
     CompositeAnomalyInjector,
     GaussianPeakInjector,
@@ -49,8 +49,6 @@ from src.anomaly_injector import (
 )
 from src.data_pipeline import create_metadata_df, preprocessing, filter_segments
 from src.electrical_signature_frequencies import ANOMALY_FREQS
-
-from fid_utils import generate_sgda_windows
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -101,7 +99,13 @@ META_SYNTH_FILENAME = "synthetic_windows_metadata.csv"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _progress(iterable, desc: str | None = None, total: int | None = None, enable_tqdm: bool = True):
+
+def _progress(
+    iterable,
+    desc: str | None = None,
+    total: int | None = None,
+    enable_tqdm: bool = True,
+):
     """Wrap an iterable with a tqdm progress bar.
 
     Parameters
@@ -159,7 +163,10 @@ def get_or_rebuild_metadata(engine_dir: Path, recreate: bool) -> pd.DataFrame:
         print(f"[metadata] Loading cached metadata: {meta_path}", flush=True)
         return pd.read_csv(meta_path)
 
-    print(f"[metadata] Rebuilding metadata for {engine_dir} (recreate={recreate})", flush=True)
+    print(
+        f"[metadata] Rebuilding metadata for {engine_dir} (recreate={recreate})",
+        flush=True,
+    )
     t0 = time.time()
     metadata_df = create_metadata_df(str(engine_dir), state2name=STATE_MAP)
     metadata_df.to_csv(meta_path, index=False)
@@ -167,7 +174,9 @@ def get_or_rebuild_metadata(engine_dir: Path, recreate: bool) -> pd.DataFrame:
     return metadata_df
 
 
-def load_or_preprocess(metadata_df: pd.DataFrame, cache_dir: Path) -> tuple[np.ndarray, pd.DataFrame, np.ndarray]:
+def load_or_preprocess(
+    metadata_df: pd.DataFrame, cache_dir: Path
+) -> tuple[np.ndarray, pd.DataFrame, np.ndarray]:
     """Load cached FFT windows if available, otherwise regenerate them.
 
     Parameters
@@ -197,7 +206,10 @@ def load_or_preprocess(metadata_df: pd.DataFrame, cache_dir: Path) -> tuple[np.n
         freqs = np.load(freqs_path)
         seg_meta_df = pd.read_csv(meta_path)
         seg_meta_df.set_index(["measurement_id", "segment_idx"], inplace=True)
-        print(f"[cache] Loaded {segments.shape[0]:,} segments in {time.time() - t0:.2f}s", flush=True)
+        print(
+            f"[cache] Loaded {segments.shape[0]:,} segments in {time.time() - t0:.2f}s",
+            flush=True,
+        )
     else:
         print(f"[preprocess] Cache miss. Regenerating in {cache_dir}", flush=True)
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -212,13 +224,17 @@ def load_or_preprocess(metadata_df: pd.DataFrame, cache_dir: Path) -> tuple[np.n
             apply_window=APPLY_WINDOW,
             db=USE_DB,
         )
-        print(f"[preprocess] Generated {segments.shape[0]:,} segments in {time.time() - t0:.2f}s", flush=True)
+        print(
+            f"[preprocess] Generated {segments.shape[0]:,} segments in {time.time() - t0:.2f}s",
+            flush=True,
+        )
     return segments, seg_meta_df, freqs
 
 
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
+
 
 def main(
     engines: Iterable[str] = ENGINE_IDS,
@@ -258,7 +274,9 @@ def main(
     engines_list = list(engines)
     print(f"[start] Preparing FID inputs for engines: {engines_list}", flush=True)
 
-    for engine_id in _progress(engines_list, desc="Engines", total=len(engines_list), enable_tqdm=enable_tqdm):
+    for engine_id in _progress(
+        engines_list, desc="Engines", total=len(engines_list), enable_tqdm=enable_tqdm
+    ):
         engine_dir = REPO_ROOT / "dataset" / engine_id
         if not engine_dir.exists():
             raise FileNotFoundError(f"Engine directory not found: {engine_dir}")
@@ -277,7 +295,9 @@ def main(
         # Load engine-specific configuration for SGDA generation.
         engine_cfg_path = engine_dir / "engine.yml"
         if not engine_cfg_path.exists():
-            raise FileNotFoundError(f"Engine configuration not found: {engine_cfg_path}")
+            raise FileNotFoundError(
+                f"Engine configuration not found: {engine_cfg_path}"
+            )
         with engine_cfg_path.open("r", encoding="utf-8") as f:
             engine_config = yaml.safe_load(f)
 
@@ -308,10 +328,15 @@ def main(
                 train_cfg = yaml.safe_load(f)
             inj_defaults.update(train_cfg.get("processing_parameters", {}))
         else:
-            print(f"[warn] Training config not found at {train_cfg_path}. Using SGDA defaults.", flush=True)
+            print(
+                f"[warn] Training config not found at {train_cfg_path}. Using SGDA defaults.",
+                flush=True,
+            )
 
         freq_resolution = float(freqs[1] - freqs[0]) if freqs.size > 1 else 1.0
-        peak_segment_bins = max(1, int(np.ceil(float(inj_defaults["peak_segment"]) / freq_resolution)))
+        peak_segment_bins = max(
+            1, int(np.ceil(float(inj_defaults["peak_segment"]) / freq_resolution))
+        )
 
         amplitude_range = tuple(
             float(v) for v in inj_defaults.get("amplitude_range", (0.5, 20.0))
@@ -327,11 +352,15 @@ def main(
             negative=bool(inj_defaults.get("include_negative_peaks", False)),
             random_peak_position=bool(inj_defaults.get("random_peak_position", False)),
         )
-        noise_injector = NoiseInjector(noise_factor=float(inj_defaults.get("noise_factor", 0.0)))
-        composite_injector = CompositeAnomalyInjector({
-            "peak-anomaly": gaussian_injector,
-            "noise": noise_injector,
-        })
+        noise_injector = NoiseInjector(
+            noise_factor=float(inj_defaults.get("noise_factor", 0.0))
+        )
+        composite_injector = CompositeAnomalyInjector(
+            {
+                "peak-anomaly": gaussian_injector,
+                "noise": noise_injector,
+            }
+        )
 
         phases_to_use = sorted(seg_meta_df["phase"].unique())
         target_faults = list(FAULT_NAME_TO_CODE.keys())
@@ -364,7 +393,9 @@ def main(
         segment_length = (
             filtered_segments.shape[1] if filtered_segments.size else SEGMENT_LENGTH
         )
-        combos = [(fn, fc, ld) for fn, fc in FAULT_NAME_TO_CODE.items() for ld in LOADS_TO_USE]
+        combos = [
+            (fn, fc, ld) for fn, fc in FAULT_NAME_TO_CODE.items() for ld in LOADS_TO_USE
+        ]
 
         saved_files = 0
         synthetic_targets: Dict[Tuple[str, str], int] = {}
@@ -471,7 +502,10 @@ def main(
         real_meta_df = pd.concat(all_real_meta_rows, ignore_index=True)
         real_meta_path = FID_DIR / META_REAL_FILENAME
         real_meta_df.to_csv(real_meta_path, index=False)
-        print(f"[done] real metadata -> {real_meta_path} (rows={real_meta_df.shape[0]:,})", flush=True)
+        print(
+            f"[done] real metadata -> {real_meta_path} (rows={real_meta_df.shape[0]:,})",
+            flush=True,
+        )
     else:
         print("[done] no real metadata rows to write", flush=True)
 
@@ -480,7 +514,10 @@ def main(
         synth_meta_df = pd.concat(all_synth_meta_rows, ignore_index=True)
         synth_meta_path = FID_DIR / META_SYNTH_FILENAME
         synth_meta_df.to_csv(synth_meta_path, index=False)
-        print(f"[done] synthetic metadata -> {synth_meta_path} (rows={synth_meta_df.shape[0]:,})", flush=True)
+        print(
+            f"[done] synthetic metadata -> {synth_meta_path} (rows={synth_meta_df.shape[0]:,})",
+            flush=True,
+        )
     else:
         print("[done] no synthetic metadata rows to write", flush=True)
 
@@ -488,6 +525,7 @@ def main(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments.
@@ -502,7 +540,9 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     argparse.Namespace
         Parsed arguments.
     """
-    parser = argparse.ArgumentParser(description="Prepare real FFT windows for FID computation.")
+    parser = argparse.ArgumentParser(
+        description="Prepare real FFT windows for FID computation."
+    )
     parser.add_argument(
         "--recreate-metadata",
         action="store_true",

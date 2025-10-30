@@ -57,6 +57,7 @@ from src.normalization import Normalizer
 # Run discovery / artifact loading
 # =============================================================================
 
+
 def _safe_load_yaml(p: Path) -> Dict[str, Any]:
     """
     Load a YAML file safely.
@@ -213,7 +214,9 @@ def _infer_num_classes(task: str, le_path: Optional[Path]) -> int:
         )
     le = joblib.load(le_path)
     if not hasattr(le, "classes_"):
-        raise AttributeError(f"Loaded label encoder at {le_path} has no 'classes_' attribute.")
+        raise AttributeError(
+            f"Loaded label encoder at {le_path} has no 'classes_' attribute."
+        )
     return int(len(le.classes_))
 
 
@@ -249,6 +252,7 @@ def _arch_from_config(cfg_model: str) -> str:
 # =============================================================================
 # Model construction & checkpoint loading
 # =============================================================================
+
 
 def build_model(
     arch: str,
@@ -323,7 +327,9 @@ def build_model(
     raise ValueError(arch)
 
 
-def load_checkpoint_into(model: nn.Module, ckpt_path: Path, device: torch.device) -> nn.Module:
+def load_checkpoint_into(
+    model: nn.Module, ckpt_path: Path, device: torch.device
+) -> nn.Module:
     """
     Load checkpoint weights into a model, handling several common formats.
 
@@ -369,7 +375,9 @@ def load_checkpoint_into(model: nn.Module, ckpt_path: Path, device: torch.device
             return model
         # Last resort: any dict value that *looks* like a state_dict
         for v in obj.values():
-            if isinstance(v, dict) and all(isinstance(x, torch.Tensor) for x in v.values()):
+            if isinstance(v, dict) and all(
+                isinstance(x, torch.Tensor) for x in v.values()
+            ):
                 model.load_state_dict(v, strict=False)
                 return model
 
@@ -385,7 +393,10 @@ def load_checkpoint_into(model: nn.Module, ckpt_path: Path, device: torch.device
 # Normalizer
 # =============================================================================
 
-def make_normalizer(method: Optional[str], mode: Optional[str], path: Optional[Path]) -> Optional[Normalizer]:
+
+def make_normalizer(
+    method: Optional[str], mode: Optional[str], path: Optional[Path]
+) -> Optional[Normalizer]:
     """
     Construct and optionally load a `Normalizer`.
 
@@ -423,6 +434,7 @@ def make_normalizer(method: Optional[str], mode: Optional[str], path: Optional[P
 # =============================================================================
 # Safe penultimate extractor (no forward hooks)
 # =============================================================================
+
 
 class _SwapClassifier:
     """
@@ -494,6 +506,7 @@ class _SwapClassifier:
 # FID windows I/O
 # =============================================================================
 
+
 def discover_windows(fid_dir: Path) -> List[Path]:
     """
     Discover all input window files to embed.
@@ -518,6 +531,7 @@ def discover_windows(fid_dir: Path) -> List[Path]:
 # =============================================================================
 # Embedding
 # =============================================================================
+
 
 def compute_embeddings(
     model: nn.Module,
@@ -555,7 +569,12 @@ def compute_embeddings(
     - The classifier is swapped out only for the duration of the forward passes.
     """
     # Early-out for empty or malformed inputs.
-    if windows is None or windows.size == 0 or windows.ndim != 2 or windows.shape[0] == 0:
+    if (
+        windows is None
+        or windows.size == 0
+        or windows.ndim != 2
+        or windows.shape[0] == 0
+    ):
         return np.empty((0, 0), dtype=np.float32)
 
     model.eval()
@@ -574,7 +593,9 @@ def compute_embeddings(
                     batch = normalizer.transform(batch)
 
                 # NN expects (N, C, L); here C=1 for a single 1D channel.
-                x = torch.as_tensor(batch, dtype=torch.float32, device=device).unsqueeze(1)
+                x = torch.as_tensor(
+                    batch, dtype=torch.float32, device=device
+                ).unsqueeze(1)
 
                 # Forward now returns penultimate features thanks to the swap.
                 f = model(x)
@@ -595,6 +616,7 @@ def compute_embeddings(
 # =============================================================================
 # CLI / main
 # =============================================================================
+
 
 def main() -> None:
     """

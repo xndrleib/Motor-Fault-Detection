@@ -84,7 +84,9 @@ def generate_sgda_windows(
             raise KeyError(f"Missing fault frequencies for '{fault_key}'")
 
         if target_count <= 0:
-            synth_windows[key] = np.empty((0, normal_segments.shape[1]), dtype=normal_segments.dtype)
+            synth_windows[key] = np.empty(
+                (0, normal_segments.shape[1]), dtype=normal_segments.dtype
+            )
             selection_indices[key] = np.empty((0,), dtype=int)
             continue
 
@@ -96,12 +98,16 @@ def generate_sgda_windows(
             )
 
         replace = candidate_indices.size < target_count
-        chosen_indices = rng.choice(candidate_indices, size=target_count, replace=replace)
+        chosen_indices = rng.choice(
+            candidate_indices, size=target_count, replace=replace
+        )
 
         base_segments = normal_segments[chosen_indices]
         freq_array = np.asarray(fault_freqs[fault_key], dtype=float)
         if freq_array.size == 0:
-            synth_windows[key] = np.empty((0, normal_segments.shape[1]), dtype=normal_segments.dtype)
+            synth_windows[key] = np.empty(
+                (0, normal_segments.shape[1]), dtype=normal_segments.dtype
+            )
             selection_indices[key] = chosen_indices.astype(int)
             continue
 

@@ -1,6 +1,6 @@
 # vibrational_signature_frequencies.py
-import math
 from typing import List, Dict
+
 
 def get_type1_freqs(engine_config: Dict[str, float]) -> List[float]:
     """
@@ -13,7 +13,7 @@ def get_type1_freqs(engine_config: Dict[str, float]) -> List[float]:
     Returns:
         list: Frequencies related to rotor rotation.
     """
-    return [engine_config['f_r']]
+    return [engine_config["f_r"]]
 
 
 def get_type2_freqs(engine_config: Dict[str, float]) -> List[float]:
@@ -42,9 +42,9 @@ def get_type3_freqs(engine_config: Dict[str, float]) -> List[float]:
     Returns:
         list: Frequencies related to cracks or fractures in rotor bars.
     """
-    f_r = engine_config['f_r']
-    s = engine_config['s']
-    p = engine_config['p']
+    f_r = engine_config["f_r"]
+    s = engine_config["s"]
+    p = engine_config["p"]
     d = f_r * s / p  # Slip frequency
     return [f_r - 2 * p * d, f_r + 2 * p * d]
 
@@ -73,7 +73,7 @@ def get_type5_freqs(engine_config: Dict[str, float]) -> List[float]:
     Returns:
         list: Frequencies related to power supply imbalance.
     """
-    f1 = engine_config['f1']
+    f1 = engine_config["f1"]
     return [2 * f1 - f1 / 3, 2 * f1 + f1 / 3]
 
 
@@ -101,7 +101,7 @@ def get_type7_freqs(engine_config: Dict[str, float]) -> List[float]:
     Returns:
         list: Frequencies for the first harmonic of rotor rotation.
     """
-    return [engine_config['f_r']]
+    return [engine_config["f_r"]]
 
 
 def get_type8_freqs(engine_config: Dict[str, float]) -> List[float]:
@@ -115,7 +115,7 @@ def get_type8_freqs(engine_config: Dict[str, float]) -> List[float]:
     Returns:
         list: Frequencies for the first harmonic in a specific direction.
     """
-    return [engine_config['f_r']]
+    return [engine_config["f_r"]]
 
 
 def get_type9_freqs(engine_config: Dict[str, float]) -> List[float]:
@@ -130,7 +130,7 @@ def get_type9_freqs(engine_config: Dict[str, float]) -> List[float]:
     Returns:
         list: Frequencies related to inter-turn short circuits in salient pole rotors.
     """
-    return [engine_config['f_r'] * 2 * engine_config['p']]
+    return [engine_config["f_r"] * 2 * engine_config["p"]]
 
 
 def get_type10_freqs(engine_config: Dict[str, float]) -> List[float]:
@@ -145,7 +145,10 @@ def get_type10_freqs(engine_config: Dict[str, float]) -> List[float]:
     Returns:
         list: Frequencies related to loosening of salient pole rotor poles.
     """
-    return [engine_config['f_r'] * (2 * engine_config['p'] - 1), engine_config['f_r'] * (2 * engine_config['p'] + 1)]
+    return [
+        engine_config["f_r"] * (2 * engine_config["p"] - 1),
+        engine_config["f_r"] * (2 * engine_config["p"] + 1),
+    ]
 
 
 def get_type11_freqs(engine_config: Dict[str, float]) -> List[float]:

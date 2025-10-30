@@ -40,11 +40,12 @@ Notes
 from __future__ import annotations
 
 import argparse
-import sys
 import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime, timezone
+
 import numpy as np
 import pandas as pd
 import yaml
@@ -53,6 +54,7 @@ import yaml
 # =============================================================================
 # Files / existence checks
 # =============================================================================
+
 
 def emb_dir_for_run(run_dir: Path, emb_root: Path) -> Path:
     """
@@ -73,7 +75,9 @@ def emb_dir_for_run(run_dir: Path, emb_root: Path) -> Path:
     return emb_root / run_dir.name
 
 
-def fid_table_paths(emb_dir: Path, csv_name: str, parquet_name: str) -> Tuple[Path, Path]:
+def fid_table_paths(
+    emb_dir: Path, csv_name: str, parquet_name: str
+) -> Tuple[Path, Path]:
     """
     Resolve expected FID table filenames inside a run's embeddings directory.
 
@@ -146,6 +150,7 @@ def read_run_fid_table(emb_dir: Path, csv_name: str, parquet_name: str) -> pd.Da
 # Subprocess helpers to call the existing scripts
 # =============================================================================
 
+
 def run_embed_script(
     embed_script: Path,
     run_dir: Path,
@@ -173,11 +178,16 @@ def run_embed_script(
         Device selection.
     """
     cmd = [
-        sys.executable, str(embed_script),
-        "--run-dir", str(run_dir),
-        "--fid-dir", str(fid_dir),
-        "--out-root", str(emb_root),
-        "--device", device,
+        sys.executable,
+        str(embed_script),
+        "--run-dir",
+        str(run_dir),
+        "--fid-dir",
+        str(fid_dir),
+        "--out-root",
+        str(emb_root),
+        "--device",
+        device,
     ]
     if batch_size is not None:
         cmd += ["--batch-size", str(batch_size)]
@@ -223,15 +233,24 @@ def run_compute_script(
         Percentile across multiple negative candidates.
     """
     cmd = [
-        sys.executable, str(compute_script),
-        "--run-dir", str(run_dir),
-        "--emb-root", str(emb_root),
-        "--out-csv", out_csv_name,
-        "--out-parquet", out_parquet_name,
-        "--rr-repeats", str(rr_repeats),
-        "--seed", str(seed),
-        "--eps", str(eps),
-        "--neg-percentile", str(neg_percentile),
+        sys.executable,
+        str(compute_script),
+        "--run-dir",
+        str(run_dir),
+        "--emb-root",
+        str(emb_root),
+        "--out-csv",
+        out_csv_name,
+        "--out-parquet",
+        out_parquet_name,
+        "--rr-repeats",
+        str(rr_repeats),
+        "--seed",
+        str(seed),
+        "--eps",
+        str(eps),
+        "--neg-percentile",
+        str(neg_percentile),
     ]
     if neg_baselines:
         cmd += ["--neg-baselines"] + list(neg_baselines)
@@ -241,6 +260,7 @@ def run_compute_script(
 # =============================================================================
 # Aggregation
 # =============================================================================
+
 
 def detect_metric_columns(df: pd.DataFrame) -> List[str]:
     """
@@ -271,7 +291,9 @@ def detect_metric_columns(df: pd.DataFrame) -> List[str]:
     return metrics
 
 
-def aggregate_runs(per_run_tables: List[pd.DataFrame]) -> Tuple[pd.DataFrame, List[str]]:
+def aggregate_runs(
+    per_run_tables: List[pd.DataFrame],
+) -> Tuple[pd.DataFrame, List[str]]:
     """
     Aggregate mean and std across runs for each (fault_code, load).
 
@@ -330,6 +352,7 @@ def aggregate_runs(per_run_tables: List[pd.DataFrame]) -> Tuple[pd.DataFrame, Li
 # YAML metafile
 # =============================================================================
 
+
 def now_timestamps() -> Dict[str, str]:
     """
     Get both UTC and local timestamps in ISO 8601.
@@ -352,62 +375,139 @@ def write_yaml(path: Path, data: Dict) -> None:
 # Main driver
 # =============================================================================
 
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Batch FID/nFID pipeline with aggregation and metadata.")
+    ap = argparse.ArgumentParser(
+        description="Batch FID/nFID pipeline with aggregation and metadata."
+    )
     # Inputs: runs
-    ap.add_argument("--run-dirs", nargs="*", type=Path, default=[],
-                    help="List of training run directories under res/runs/…")
-    ap.add_argument("--runs-file", type=Path, default=None,
-                    help="Optional text file with one run directory per line.")
+    ap.add_argument(
+        "--run-dirs",
+        nargs="*",
+        type=Path,
+        default=[],
+        help="List of training run directories under res/runs/…",
+    )
+    ap.add_argument(
+        "--runs-file",
+        type=Path,
+        default=None,
+        help="Optional text file with one run directory per line.",
+    )
     # Where inputs/outputs live
-    ap.add_argument("--fid-dir", type=Path, default=Path("res/fid_inputs"),
-                    help="Folder with real_*.npy / synth_*.npy for embedding.")
-    ap.add_argument("--emb-root", type=Path, default=Path("res/fid_embs"),
-                    help="Root folder that holds per-run embeddings and FID tables.")
-    ap.add_argument("--agg-root", type=Path, default=Path("res/fid_aggregates"),
-                    help="Root folder where aggregated outputs will be written.")
-    ap.add_argument("--agg-name", type=str, default=None,
-                    help="Optional subfolder name under agg-root; if omitted, uses a timestamp.")
+    ap.add_argument(
+        "--fid-dir",
+        type=Path,
+        default=Path("res/fid_inputs"),
+        help="Folder with real_*.npy / synth_*.npy for embedding.",
+    )
+    ap.add_argument(
+        "--emb-root",
+        type=Path,
+        default=Path("res/fid_embs"),
+        help="Root folder that holds per-run embeddings and FID tables.",
+    )
+    ap.add_argument(
+        "--agg-root",
+        type=Path,
+        default=Path("res/fid_aggregates"),
+        help="Root folder where aggregated outputs will be written.",
+    )
+    ap.add_argument(
+        "--agg-name",
+        type=str,
+        default=None,
+        help="Optional subfolder name under agg-root; if omitted, uses a timestamp.",
+    )
     # Script paths (allow overriding layout)
-    ap.add_argument("--embed-script", type=Path, default=Path("experiments/build_fid_embeddings.py"),
-                    help="Path to the per-run embedding script.")
-    ap.add_argument("--compute-script", type=Path, default=Path("experiments/compute_fid_table.py"),
-                    help="Path to the per-run FID/nFID script (single-table CSV+Parquet).")
+    ap.add_argument(
+        "--embed-script",
+        type=Path,
+        default=Path("experiments/build_fid_embeddings.py"),
+        help="Path to the per-run embedding script.",
+    )
+    ap.add_argument(
+        "--compute-script",
+        type=Path,
+        default=Path("experiments/compute_fid_table.py"),
+        help="Path to the per-run FID/nFID script (single-table CSV+Parquet).",
+    )
     # Per-run output filenames to check/write
-    ap.add_argument("--per-run-csv", type=str, default="fid_table.csv",
-                    help="Filename of the detailed table written inside each run's emb dir (CSV).")
-    ap.add_argument("--per-run-parquet", type=str, default="fid_table.parquet",
-                    help="Filename of the detailed table written inside each run's emb dir (Parquet).")
+    ap.add_argument(
+        "--per-run-csv",
+        type=str,
+        default="fid_table.csv",
+        help="Filename of the detailed table written inside each run's emb dir (CSV).",
+    )
+    ap.add_argument(
+        "--per-run-parquet",
+        type=str,
+        default="fid_table.parquet",
+        help="Filename of the detailed table written inside each run's emb dir (Parquet).",
+    )
     # Recompute policy
-    ap.add_argument("--force", action="store_true",
-                    help="If set, recompute FID/nFID even if table exists.")
-    ap.add_argument("--skip-embed", action="store_true",
-                    help="If set, do not run the embedding script (assumes embeddings exist).")
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="If set, recompute FID/nFID even if table exists.",
+    )
+    ap.add_argument(
+        "--skip-embed",
+        action="store_true",
+        help="If set, do not run the embedding script (assumes embeddings exist).",
+    )
     # Embedding options
-    ap.add_argument("--batch-size", type=int, default=None,
-                    help="Optional override for embedding batch size.")
-    ap.add_argument("--device", type=str, choices=["auto", "cpu", "cuda"], default="auto",
-                    help="Device for embedding.")
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Optional override for embedding batch size.",
+    )
+    ap.add_argument(
+        "--device",
+        type=str,
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Device for embedding.",
+    )
     # FID options
-    ap.add_argument("--rr-repeats", type=int, default=10,
-                    help="Split-half repeats for FID_RR.")
-    ap.add_argument("--seed", type=int, default=123,
-                    help="RNG seed for split-halves.")
-    ap.add_argument("--eps", type=float, default=1e-6,
-                    help="Covariance jitter.")
-    ap.add_argument("--neg-baselines", nargs="*",
-                    choices=["real-other-fault", "real-synth-other-fault", "synth-other-fault"],
-                    default=None,
-                    help="Which negative baselines to compute; if omitted, compute all.")
-    ap.add_argument("--neg-percentile", type=float, default=0.5,
-                    help="Percentile across multiple 'other fault' candidates (0.5 = median).")
+    ap.add_argument(
+        "--rr-repeats", type=int, default=10, help="Split-half repeats for FID_RR."
+    )
+    ap.add_argument("--seed", type=int, default=123, help="RNG seed for split-halves.")
+    ap.add_argument("--eps", type=float, default=1e-6, help="Covariance jitter.")
+    ap.add_argument(
+        "--neg-baselines",
+        nargs="*",
+        choices=["real-other-fault", "real-synth-other-fault", "synth-other-fault"],
+        default=None,
+        help="Which negative baselines to compute; if omitted, compute all.",
+    )
+    ap.add_argument(
+        "--neg-percentile",
+        type=float,
+        default=0.5,
+        help="Percentile across multiple 'other fault' candidates (0.5 = median).",
+    )
     # Aggregated output filenames
-    ap.add_argument("--agg-csv", type=str, default="fid_aggregate.csv",
-                    help="Filename of aggregated table (CSV).")
-    ap.add_argument("--agg-parquet", type=str, default="fid_aggregate.parquet",
-                    help="Filename of aggregated table (Parquet).")
-    ap.add_argument("--agg-meta", type=str, default="fid_aggregate_meta.yaml",
-                    help="Filename of metadata YAML.")
+    ap.add_argument(
+        "--agg-csv",
+        type=str,
+        default="fid_aggregate.csv",
+        help="Filename of aggregated table (CSV).",
+    )
+    ap.add_argument(
+        "--agg-parquet",
+        type=str,
+        default="fid_aggregate.parquet",
+        help="Filename of aggregated table (Parquet).",
+    )
+    ap.add_argument(
+        "--agg-meta",
+        type=str,
+        default="fid_aggregate_meta.yaml",
+        help="Filename of metadata YAML.",
+    )
 
     args = ap.parse_args()
 
@@ -420,7 +520,9 @@ def main() -> None:
                 if line:
                     run_dirs.append(Path(line))
     if not run_dirs:
-        raise SystemExit("No run directories provided. Use --run-dirs ... or --runs-file file.txt")
+        raise SystemExit(
+            "No run directories provided. Use --run-dirs ... or --runs-file file.txt"
+        )
 
     # Choose aggregation output folder
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -433,17 +535,28 @@ def main() -> None:
     per_run_tables: List[pd.DataFrame] = []
 
     # Normalize neg-baselines set for compute script
-    neg_baselines = args.neg_baselines or ["real-other-fault", "real-synth-other-fault", "synth-other-fault"]
+    neg_baselines = args.neg_baselines or [
+        "real-other-fault",
+        "real-synth-other-fault",
+        "synth-other-fault",
+    ]
 
     # Process each run
     for run_dir in run_dirs:
         run_dir = run_dir.resolve()
         run_id = run_dir.name
-        status = {"run_dir": str(run_dir), "computed": False, "skipped_preexisting": False, "errors": []}
+        status = {
+            "run_dir": str(run_dir),
+            "computed": False,
+            "skipped_preexisting": False,
+            "errors": [],
+        }
 
         emb_dir = emb_dir_for_run(run_dir, args.emb_root)
         try:
-            need_compute = args.force or (not fid_table_exists(emb_dir, args.per_run_csv, args.per_run_parquet))
+            need_compute = args.force or (
+                not fid_table_exists(emb_dir, args.per_run_csv, args.per_run_parquet)
+            )
             if need_compute:
                 # Ensure embeddings exist (unless user asked to skip)
                 if not args.skip_embed:
@@ -480,7 +593,9 @@ def main() -> None:
             per_run_tables.append(df_run)
 
         except subprocess.CalledProcessError as e:
-            status["errors"].append(f"subprocess error (returncode={e.returncode}) during compute/embed")
+            status["errors"].append(
+                f"subprocess error (returncode={e.returncode}) during compute/embed"
+            )
         except Exception as e:
             status["errors"].append(str(e))
 
@@ -549,7 +664,9 @@ def main() -> None:
         "summary": {
             "total_runs": len(run_dirs),
             "runs_with_tables": len(per_run_tables),
-            "runs_successful": sum(1 for s in per_run_status.values() if not s["errors"]),
+            "runs_successful": sum(
+                1 for s in per_run_status.values() if not s["errors"]
+            ),
             "runs_failed": sum(1 for s in per_run_status.values() if s["errors"]),
         },
     }
@@ -560,9 +677,11 @@ def main() -> None:
     print(f"Aggregated CSV    : {out_csv}")
     print(f"Aggregated Parquet: {out_parquet} ({'ok' if parquet_ok else 'failed'})")
     print(f"Metadata YAML     : {out_dir / args.agg_meta}")
-    ok_runs = [rid for rid, st in per_run_status.items() if not st['errors']]
-    bad_runs = {rid: st['errors'] for rid, st in per_run_status.items() if st['errors']}
-    print(f"Successful runs   : {len(ok_runs)} → {', '.join(ok_runs) if ok_runs else '-'}")
+    ok_runs = [rid for rid, st in per_run_status.items() if not st["errors"]]
+    bad_runs = {rid: st["errors"] for rid, st in per_run_status.items() if st["errors"]}
+    print(
+        f"Successful runs   : {len(ok_runs)} → {', '.join(ok_runs) if ok_runs else '-'}"
+    )
     if bad_runs:
         print("Failed runs:")
         for rid, errs in bad_runs.items():

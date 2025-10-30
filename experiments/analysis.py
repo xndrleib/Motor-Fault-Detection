@@ -1,10 +1,11 @@
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
 # Load aggregated results
-RESULTS_FOLDER = Path('../res/')
+RESULTS_FOLDER = Path("../res/")
 df = pd.read_csv(RESULTS_FOLDER / "aggregate_results.csv")
 
 
@@ -39,7 +40,18 @@ for task in ["binary", "multiclass"]:
     # === Top Configurations by F1 ===
     top_df = df_task.sort_values("macro_f1", ascending=False).head(TOP_N)
     print(f"\nTop {TOP_N} Configurations by Macro F1 ({task}):\n")
-    print(top_df[["filename", "macro_f1", "batch_size", "dropout", "attention_module", "normalization_mode"]])
+    print(
+        top_df[
+            [
+                "filename",
+                "macro_f1",
+                "batch_size",
+                "dropout",
+                "attention_module",
+                "normalization_mode",
+            ]
+        ]
+    )
 
     # Save top configs to CSV
     top_df.to_csv(RESULTS_FOLDER / f"top_{task}_configs.csv", index=False)

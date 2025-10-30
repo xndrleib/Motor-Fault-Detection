@@ -11,10 +11,10 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset
 from pathlib import Path
 
+
 def _min_per_class(group: Dict[str, np.ndarray]) -> int:
     """Returns the smallest class count in the group for balancing."""
     return min(len(v) for v in group.values())
-
 
 
 def create_balanced_datasets(
@@ -32,8 +32,8 @@ def create_balanced_datasets(
     save_indices: bool = False,
     indices_dir: Optional[os.PathLike] = None,
     return_indices: bool = False,
-    train_dataset_cls = None,
-    train_dataset_kwargs: Optional[dict] = None
+    train_dataset_cls=None,
+    train_dataset_kwargs: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
     Split → balance → build (train, val, test) datasets.
@@ -51,12 +51,12 @@ def create_balanced_datasets(
     rng = np.random.default_rng(seed)
 
     # ── 1. stratified index split (unchanged) ──────────────────────────────
-    normal_idx    = seg_meta_df.index[seg_meta_df["state"] == "normal"].to_numpy()
+    normal_idx = seg_meta_df.index[seg_meta_df["state"] == "normal"].to_numpy()
     fault_idx_all = seg_meta_df.index[seg_meta_df["state"] != "normal"].to_numpy()
 
     real_fault_train = min(int(real_fault_train), len(fault_idx_all))
-    train_fault_idx  = rng.choice(fault_idx_all, real_fault_train, replace=False)
-    fault_idx_eval   = np.setdiff1d(fault_idx_all, train_fault_idx)
+    train_fault_idx = rng.choice(fault_idx_all, real_fault_train, replace=False)
+    fault_idx_eval = np.setdiff1d(fault_idx_all, train_fault_idx)
 
     norm_train_idx, norm_test_idx = train_test_split(
         normal_idx, test_size=test_size, random_state=seed, shuffle=True
@@ -77,53 +77,76 @@ def create_balanced_datasets(
 
     # ── 2. undersample VAL / TEST for perfect balance ─────────────────────
     if mode == "binary":
-        by_cls_val  = {"normal": norm_val_idx,  "fault": fault_val_idx}
+        by_cls_val = {"normal": norm_val_idx, "fault": fault_val_idx}
         by_cls_test = {"normal": norm_test_idx, "fault": fault_test_idx}
-        n_val  = _min_per_class(by_cls_val)
+        n_val = _min_per_class(by_cls_val)
         n_test = _min_per_class(by_cls_test)
-        val_idx  = np.concatenate([
-            rng.choice(by_cls_val["normal"], n_val,  replace=False),
-            rng.choice(by_cls_val["fault"],  n_val,  replace=False),
-        ])
-        test_idx = np.concatenate([
-            rng.choice(by_cls_test["normal"], n_test, replace=False),
-            rng.choice(by_cls_test["fault"],  n_test, replace=False),
-        ])
+        val_idx = np.concatenate(
+            [
+                rng.choice(by_cls_val["normal"], n_val, replace=False),
+                rng.choice(by_cls_val["fault"], n_val, replace=False),
+            ]
+        )
+        test_idx = np.concatenate(
+            [
+                rng.choice(by_cls_test["normal"], n_test, replace=False),
+                rng.choice(by_cls_test["fault"], n_test, replace=False),
+            ]
+        )
     else:  # multiclass
-        classes     = seg_meta_df["state"].unique().tolist()
-        by_cls_val  = {c: seg_meta_df.index[
-            (seg_meta_df["state"] == c) &
-            (seg_meta_df.index.isin(norm_val_idx)  |
-             seg_meta_df.index.isin(fault_val_idx))
-        ].to_numpy() for c in classes}
-        by_cls_test = {c: seg_meta_df.index[
-            (seg_meta_df["state"] == c) &
-            (seg_meta_df.index.isin(norm_test_idx) |
-             seg_meta_df.index.isin(fault_test_idx))
-        ].to_numpy() for c in classes}
-        n_val  = _min_per_class(by_cls_val)
+        classes = seg_meta_df["state"].unique().tolist()
+        by_cls_val = {
+            c: seg_meta_df.index[
+                (seg_meta_df["state"] == c)
+                & (
+                    seg_meta_df.index.isin(norm_val_idx)
+                    | seg_meta_df.index.isin(fault_val_idx)
+                )
+            ].to_numpy()
+            for c in classes
+        }
+        by_cls_test = {
+            c: seg_meta_df.index[
+                (seg_meta_df["state"] == c)
+                & (
+                    seg_meta_df.index.isin(norm_test_idx)
+                    | seg_meta_df.index.isin(fault_test_idx)
+                )
+            ].to_numpy()
+            for c in classes
+        }
+        n_val = _min_per_class(by_cls_val)
         n_test = _min_per_class(by_cls_test)
-        val_idx  = np.concatenate([rng.choice(by_cls_val[c],  n_val,  False) for c in classes])
-        test_idx = np.concatenate([rng.choice(by_cls_test[c], n_test, False) for c in classes])
+        val_idx = np.concatenate(
+            [rng.choice(by_cls_val[c], n_val, False) for c in classes]
+        )
+        test_idx = np.concatenate(
+            [rng.choice(by_cls_test[c], n_test, False) for c in classes]
+        )
 
     train_idx = np.concatenate([norm_train_idx, train_fault_idx])
 
     # ── 3. persist indices (optional) ─────────────────────────────────────
     if save_indices:
-        p = Path(indices_dir or os.getcwd()); p.mkdir(parents=True, exist_ok=True)
+        p = Path(indices_dir or os.getcwd())
+        p.mkdir(parents=True, exist_ok=True)
         np.save(p / f"train_idx_{mode}.npy", train_idx)
-        np.save(p / f"val_idx_{mode}.npy",   val_idx)
-        np.save(p / f"test_idx_{mode}.npy",  test_idx)
+        np.save(p / f"val_idx_{mode}.npy", val_idx)
+        np.save(p / f"test_idx_{mode}.npy", test_idx)
         print(f"[✓] index arrays saved to {p.resolve()}/")
 
     # ── 4. build NumPy views ──────────────────────────────────────────────
-    i2r   = seg_meta_df.index.get_indexer
+    i2r = seg_meta_df.index.get_indexer
     X_trn = segments[i2r(train_idx)]
     X_val = segments[i2r(val_idx)]
     X_tst = segments[i2r(test_idx)]
 
     # ── 5. fit global normaliser **once** on TRAIN windows ───────────────
-    if normalizer is not None and normalizer.mode == "global" and normalizer.stats is None:
+    if (
+        normalizer is not None
+        and normalizer.mode == "global"
+        and normalizer.stats is None
+    ):
         normalizer.fit(X_trn)
 
     # ── 6. normalise VAL / TEST immediately (TRAIN is done on‑the‑fly) ───
@@ -132,12 +155,12 @@ def create_balanced_datasets(
         X_tst = normalizer.transform(X_tst)
 
     # ── 7. labels for evaluation tensors ─────────────────────────────────
-    y_val_raw  = seg_meta_df.loc[val_idx,  "state"].values
-    y_tst_raw  = seg_meta_df.loc[test_idx, "state"].values
+    y_val_raw = seg_meta_df.loc[val_idx, "state"].values
+    y_tst_raw = seg_meta_df.loc[test_idx, "state"].values
 
     if mode == "binary":
-        y_val = (y_val_raw  != "normal").astype(np.int64)
-        y_tst = (y_tst_raw  != "normal").astype(np.int64)
+        y_val = (y_val_raw != "normal").astype(np.int64)
+        y_tst = (y_tst_raw != "normal").astype(np.int64)
         label_encoder = None
     else:
         label_encoder = LabelEncoder().fit(seg_meta_df["state"])
@@ -147,31 +170,37 @@ def create_balanced_datasets(
     # ── 9. construct datasets ───────────────────────────────────────────
 
     train_ds = train_dataset_cls(
-        segments         = X_trn,
-        seg_meta_df      = seg_meta_df.loc[train_idx],
-        freqs            = freqs,
-        fault_freqs      = fault_freqs,
-        mode             = mode,
-        normalizer       = normalizer,
-        anomaly_injector = anomaly_injector,
+        segments=X_trn,
+        seg_meta_df=seg_meta_df.loc[train_idx],
+        freqs=freqs,
+        fault_freqs=fault_freqs,
+        mode=mode,
+        normalizer=normalizer,
+        anomaly_injector=anomaly_injector,
         **train_dataset_kwargs,
     )
 
-    val_ds  = TensorDataset(
+    val_ds = TensorDataset(
         torch.tensor(X_val, dtype=torch.float32).unsqueeze(1),
-        torch.tensor(y_val, dtype=torch.long)
+        torch.tensor(y_val, dtype=torch.long),
     )
     test_ds = TensorDataset(
         torch.tensor(X_tst, dtype=torch.float32).unsqueeze(1),
-        torch.tensor(y_tst, dtype=torch.long)
+        torch.tensor(y_tst, dtype=torch.long),
     )
 
-    out: Dict[str, Any] = {"train": train_ds, "val": val_ds, "test": test_ds, "normalizer": normalizer}
+    out: Dict[str, Any] = {
+        "train": train_ds,
+        "val": val_ds,
+        "test": test_ds,
+        "normalizer": normalizer,
+    }
     if mode == "multiclass":
         out["label_encoder"] = label_encoder
     if return_indices:
         out.update({"train_idx": train_idx, "val_idx": val_idx, "test_idx": test_idx})
     return out
+
 
 class FaultInjectionDataset(Dataset):
     """
@@ -211,19 +240,19 @@ class FaultInjectionDataset(Dataset):
     ):
         super().__init__()
         assert 0.0 <= p_inject <= 1.0
-        self.segments     = segments
-        self.meta         = seg_meta_df.reset_index(drop=True)   # align i = row
-        self.freqs        = freqs
-        self.fault_freqs  = fault_freqs
-        self.fault_types  = sorted(fault_freqs.keys())
-        self.mode         = mode
-        self.norm         = normalizer
-        self.inj          = anomaly_injector
-        self.p            = p_inject
-        self.cache_flag   = cache
+        self.segments = segments
+        self.meta = seg_meta_df.reset_index(drop=True)  # align i = row
+        self.freqs = freqs
+        self.fault_freqs = fault_freqs
+        self.fault_types = sorted(fault_freqs.keys())
+        self.mode = mode
+        self.norm = normalizer
+        self.inj = anomaly_injector
+        self.p = p_inject
+        self.cache_flag = cache
 
         # RNG - worker-safe (DataLoader forks after construction)
-        self.rng  = np.random.RandomState(seed)
+        self.rng = np.random.RandomState(seed)
 
         # LabelEncoder only if needed
         if mode == "multiclass":
@@ -232,18 +261,18 @@ class FaultInjectionDataset(Dataset):
             self.le = None
 
         # maps built in .refresh()
-        self.flip_mask      = None      # bool (N,)   - which normals flip
-        self.assigned_fault = None      # str  (N,)   - fault type per flip
-        self._cached_xy     = None      # list[(Tensor,Tensor)] if cache==True
+        self.flip_mask = None  # bool (N,)   - which normals flip
+        self.assigned_fault = None  # str  (N,)   - fault type per flip
+        self._cached_xy = None  # list[(Tensor,Tensor)] if cache==True
 
-        self.refresh(0)     # build epoch-0 state
+        self.refresh(0)  # build epoch-0 state
 
     def refresh(self, epoch_seed: int | None = None) -> None:
         """Redraw which normal windows turn into which synthetic faults."""
         if epoch_seed is not None:
             self.rng.seed(epoch_seed)
 
-        is_normal  = self.meta["state"].to_numpy() == "normal"
+        is_normal = self.meta["state"].to_numpy() == "normal"
         self.flip_mask = np.zeros(len(self), dtype=bool)
         self.flip_mask[is_normal] = self.rng.rand(is_normal.sum()) < self.p
 
@@ -267,7 +296,7 @@ class FaultInjectionDataset(Dataset):
         if self._cached_xy is not None:
             return self._cached_xy[idx]
         return self._build_sample(idx)
-    
+
     def _build_sample(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Return (x, y) WITH deterministic synthetic injection."""
         seg = self.segments[idx].copy()
@@ -278,10 +307,10 @@ class FaultInjectionDataset(Dataset):
             ftype = self.assigned_fault[idx]
             if self.inj is not None:
                 seg = self.inj.inject(
-                    segment       = seg,
-                    fft_freqs     = self.freqs,
-                    fault_freqs   = self.fault_freqs[ftype],
-                    injector_keys = ["peak-anomaly"],
+                    segment=seg,
+                    fft_freqs=self.freqs,
+                    fault_freqs=self.fault_freqs[ftype],
+                    injector_keys=["peak-anomaly"],
                 )
             chosen_state = ftype
         else:
@@ -290,10 +319,10 @@ class FaultInjectionDataset(Dataset):
         # 2) optional noise injection (always last)
         if self.inj is not None and "noise" in self.inj.injectors:
             seg = self.inj.inject(
-                segment       = seg,
-                fft_freqs     = self.freqs,
-                fault_freqs   = None,
-                injector_keys = ["noise"],
+                segment=seg,
+                fft_freqs=self.freqs,
+                fault_freqs=None,
+                injector_keys=["noise"],
             )
 
         # 3) optional normalisation
@@ -310,6 +339,7 @@ class FaultInjectionDataset(Dataset):
                 int(self.le.transform([chosen_state])[0]), dtype=torch.long
             )
         return x, y
+
 
 class AugmentedPoolDataset(Dataset):
     """
@@ -348,35 +378,35 @@ class AugmentedPoolDataset(Dataset):
         rng_seed: int = 0,
     ) -> None:
         super().__init__()
-        self.mode   = mode
-        self.norm   = normalizer
-        self.freqs  = freqs
-        self.inj    = injector
-        self.rng    = np.random.RandomState(rng_seed)
+        self.mode = mode
+        self.norm = normalizer
+        self.freqs = freqs
+        self.inj = injector
+        self.rng = np.random.RandomState(rng_seed)
 
         # 1. separate original arrays
         is_norm = seg_meta_df["state"].to_numpy() == "normal"
-        self.orig_norm = segments[is_norm]                   # (N, L)
+        self.orig_norm = segments[is_norm]  # (N, L)
         self.orig_meta = seg_meta_df[is_norm].reset_index()  # keep for src idx
         N, L = self.orig_norm.shape
         self.fault_types = sorted(fault_freqs.keys())
 
         # 2. allocate augmented arrays ------------------------------------------------
-        num_fault  = N * K * len(self.fault_types)
-        num_noisy  = N * R
-        num_orig   = N                                     # keep originals
-        total      = num_fault + num_noisy + num_orig
+        num_fault = N * K * len(self.fault_types)
+        num_noisy = N * R
+        num_orig = N  # keep originals
+        total = num_fault + num_noisy + num_orig
 
-        self.pool  = np.empty((total, L), dtype=np.float32)
-        self.cls   = np.empty(total, dtype=object)         # class names
-        self.src   = np.empty(total, dtype=object)         # 'orig'/'noise'/'gauss'
+        self.pool = np.empty((total, L), dtype=np.float32)
+        self.cls = np.empty(total, dtype=object)  # class names
+        self.src = np.empty(total, dtype=object)  # 'orig'/'noise'/'gauss'
 
         write_ptr = 0
 
         # 2-a. original normals (always included)
-        self.pool[write_ptr:write_ptr+N] = self.orig_norm
-        self.cls [write_ptr:write_ptr+N] = "normal"
-        self.src [write_ptr:write_ptr+N] = "orig"
+        self.pool[write_ptr : write_ptr + N] = self.orig_norm
+        self.cls[write_ptr : write_ptr + N] = "normal"
+        self.src[write_ptr : write_ptr + N] = "orig"
         write_ptr += N
 
         # 2-b. R noisy-normal variants
@@ -384,9 +414,9 @@ class AugmentedPoolDataset(Dataset):
             noise_inj = NoiseInjector(noise_factor=0.05)
             for r in range(R):
                 noisy = np.stack([noise_inj.inject(s) for s in self.orig_norm])
-                self.pool[write_ptr:write_ptr+N] = noisy
-                self.cls [write_ptr:write_ptr+N] = "normal"
-                self.src [write_ptr:write_ptr+N] = f"noise{r}"
+                self.pool[write_ptr : write_ptr + N] = noisy
+                self.cls[write_ptr : write_ptr + N] = "normal"
+                self.src[write_ptr : write_ptr + N] = f"noise{r}"
                 write_ptr += N
 
         # 2-c. K fault variants for every fault type
@@ -394,17 +424,20 @@ class AugmentedPoolDataset(Dataset):
             for f in self.fault_types:
                 ffreq = fault_freqs[f]
                 for k in range(K):
-                    aug = np.stack([
-                        injector.inject(
-                            segment=s,
-                            fft_freqs=freqs,
-                            fault_freqs=ffreq,
-                            injector_keys=["peak-anomaly"]
-                        ) for s in self.orig_norm
-                    ])
-                    self.pool[write_ptr:write_ptr+N]  = aug
-                    self.cls [write_ptr:write_ptr+N]  = f
-                    self.src [write_ptr:write_ptr+N]  = f"gauss{k}"
+                    aug = np.stack(
+                        [
+                            injector.inject(
+                                segment=s,
+                                fft_freqs=freqs,
+                                fault_freqs=ffreq,
+                                injector_keys=["peak-anomaly"],
+                            )
+                            for s in self.orig_norm
+                        ]
+                    )
+                    self.pool[write_ptr : write_ptr + N] = aug
+                    self.cls[write_ptr : write_ptr + N] = f
+                    self.src[write_ptr : write_ptr + N] = f"gauss{k}"
                     write_ptr += N
 
         assert write_ptr == total, "allocation mismatch"
@@ -413,21 +446,21 @@ class AugmentedPoolDataset(Dataset):
         if mode == "binary":
             # 'normal'=0, 'fault'=1
             self.y_int = np.where(self.cls == "normal", 0, 1).astype(np.int64)
-            self.le    = None
+            self.le = None
         else:
             self.le = LabelEncoder().fit(np.unique(self.cls))
             self.y_int = self.le.transform(self.cls)
 
         # 4. shuffle once (optional, for contiguous class blocks)
         perm = self.rng.permutation(total)
-        self.pool  = self.pool[perm]
+        self.pool = self.pool[perm]
         self.y_int = self.y_int[perm]
 
     def __len__(self) -> int:
         return self.pool.shape[0]
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        seg = self.pool[idx].copy()                      # (L,)
+        seg = self.pool[idx].copy()  # (L,)
         if self.norm is not None:
             seg = self.norm.transform(seg[None, ...])[0]
         x = torch.tensor(seg, dtype=torch.float32).unsqueeze(0)
@@ -460,33 +493,35 @@ class HybridAugFaultDataset(Dataset):
     keep_orig : bool  - store an untouched copy of every normal window
     """
 
-    def __init__(self,
-                 segments: np.ndarray,
-                 seg_meta_df,
-                 freqs: np.ndarray,
-                 fault_freqs: Dict[str, np.ndarray],
-                 *,
-                 mode: str = "binary",
-                 normalizer: Optional[Normalizer] = None,
-                 anomaly_injector: Optional[CompositeAnomalyInjector] = None,
-                 K: int = 2,
-                 R: int = 1,
-                 keep_orig: bool = True,
-                 seed: int = 0,
-                 cache: bool = False):
+    def __init__(
+        self,
+        segments: np.ndarray,
+        seg_meta_df,
+        freqs: np.ndarray,
+        fault_freqs: Dict[str, np.ndarray],
+        *,
+        mode: str = "binary",
+        normalizer: Optional[Normalizer] = None,
+        anomaly_injector: Optional[CompositeAnomalyInjector] = None,
+        K: int = 2,
+        R: int = 1,
+        keep_orig: bool = True,
+        seed: int = 0,
+        cache: bool = False,
+    ):
         super().__init__()
-        self.segments  = segments
-        self.meta      = seg_meta_df.reset_index(drop=True)
-        self.freqs     = freqs
-        self.fault_f   = fault_freqs
-        self.fault_t   = sorted(fault_freqs.keys())
-        self.mode      = mode
-        self.norm      = normalizer
-        self.inj       = anomaly_injector
+        self.segments = segments
+        self.meta = seg_meta_df.reset_index(drop=True)
+        self.freqs = freqs
+        self.fault_f = fault_freqs
+        self.fault_t = sorted(fault_freqs.keys())
+        self.mode = mode
+        self.norm = normalizer
+        self.inj = anomaly_injector
         self.K, self.R = int(K), int(R)
         self.keep_orig = keep_orig
-        self.cache_on  = cache
-        self.rng       = np.random.RandomState(seed)
+        self.cache_on = cache
+        self.rng = np.random.RandomState(seed)
 
         if self.inj is None and (self.K > 0 or self.R > 0):
             raise ValueError("K>0 or R>0 require a non-None anomaly_injector.")
@@ -497,14 +532,14 @@ class HybridAugFaultDataset(Dataset):
         else:
             self.le = None
 
-        self.refresh(0)          # build epoch-0
+        self.refresh(0)  # build epoch-0
 
     # ────────────────────────────────────────────────────────────────────
     def refresh(self, epoch_seed: int | None = None) -> None:
         if epoch_seed is not None:
             self.rng.seed(epoch_seed)
 
-        self.variant_map: List[Tuple[int,str,str,int]] = []
+        self.variant_map: List[Tuple[int, str, str, int]] = []
         # tuple = (base_idx, base_state, variant_tag, fault_idx)
 
         GAUSS = "__gauss"
@@ -552,20 +587,24 @@ class HybridAugFaultDataset(Dataset):
 
         # --- decide variant --------------------------------------------------
         if tag.startswith("noise"):
-            seg = self.inj.inject(seg, self.freqs, fault_freqs=None, injector_keys=["noise"])
-        elif "__gauss" in tag:                            # synthetic Gaussian fault
+            seg = self.inj.inject(
+                seg, self.freqs, fault_freqs=None, injector_keys=["noise"]
+            )
+        elif "__gauss" in tag:  # synthetic Gaussian fault
             ftype = self.fault_t[f_idx]
             seg = self.inj.inject(
-                segment       = seg,
-                fft_freqs     = self.freqs,
-                fault_freqs   = self.fault_f[ftype],
-                injector_keys = ["peak-anomaly"]
+                segment=seg,
+                fft_freqs=self.freqs,
+                fault_freqs=self.fault_f[ftype],
+                injector_keys=["peak-anomaly"],
             )
-            base_state = ftype                       # label as fault
+            base_state = ftype  # label as fault
 
             # optional additive noise **after** peaks
             if "noise" in self.inj.injectors:
-                seg = self.inj.inject(seg, self.freqs, fault_freqs=None, injector_keys=["noise"])
+                seg = self.inj.inject(
+                    seg, self.freqs, fault_freqs=None, injector_keys=["noise"]
+                )
 
         # else: 'orig' or 'real' - keep as is
 
