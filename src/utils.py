@@ -1,12 +1,9 @@
 # utils.py
 import datetime
-import os
 import random
 import shutil
-from pathlib import Path
 
 import numpy as np
-import torch
 import yaml
 
 
@@ -30,27 +27,171 @@ def create_experiment_folder(base_dir="../res", exp_name="engine_1"):
     return full_path
 
 
-def save_best(model, epoch, metric, mode, out_dir):
-    """
-    Persist best model.
-      • model … the nn.Module
-      • metric … the *higher-is-better* score (e.g. val-accuracy)
-      • mode … "binary" | "multiclass"
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fname = out_dir / f"best_{mode}.pth"
+import json
+import os
+import hashlib
+import logging
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Literal
 
-    torch.save(
-        {
-            "epoch": epoch,
-            "metric": metric,
-            "state": model.state_dict(),
-        },
-        fname,
+import torch
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import _LRScheduler as LRScheduler  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+
+def _sha256(path: Path) -> str:
+    """Compute SHA256 for a file."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def save_best(
+    model: torch.nn.Module,
+    epoch: int,
+    metric: float,
+    mode: Literal["binary", "multiclass"],
+    out_dir: str | Path,
+    *,
+    optimizer: Optional[Optimizer] = None,
+    scheduler: Optional[LRScheduler] = None,
+    metric_name: str = "val_accuracy",
+    filename: Optional[str] = None,
+    keep_snapshot: bool = True,
+    write_meta_json: bool = True,
+    extra: Optional[dict] = None,
+) -> Path:
+    """Persist the best-performing model checkpoint (atomic & metadata-rich).
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Trained model whose parameters will be saved via ``state_dict()``.
+    epoch : int
+        Epoch number at which the best metric was observed.
+    metric : float
+        Higher-is-better score (e.g., validation accuracy).
+    mode : {"binary", "multiclass"}
+        Short tag used in filenames (e.g., ``best_binary.pth``).
+    out_dir : str or Path
+        Output directory where the checkpoint will be written.
+    optimizer : torch.optim.Optimizer, optional
+        If provided, the optimizer state dict is stored under key ``"optimizer"``.
+    scheduler : torch.optim.lr_scheduler._LRScheduler, optional
+        If provided, the scheduler state dict is stored under key ``"scheduler"``.
+    metric_name : str, default="val_accuracy"
+        Name of the metric used for model selection (stored in metadata).
+    filename : str or None, optional
+        Explicit filename for the canonical checkpoint. If ``None``, defaults to
+        ``f"best_{mode}.pth"``.
+    keep_snapshot : bool, default=True
+        If ``True``, also write a versioned snapshot with epoch/metric in the name.
+    write_meta_json : bool, default=True
+        If ``True``, write a JSON sidecar (same stem) containing metadata and SHA256.
+    extra : dict or None, optional
+        Additional user-defined metadata to embed into the checkpoint package.
+
+    Returns
+    -------
+    pathlib.Path
+        Path to the canonical checkpoint file (e.g., ``.../best_binary.pth``).
+
+    Notes
+    -----
+    - Save is **atomic**: writes to a temporary file in the same directory, then renames.
+    - The returned checkpoint contains keys:
+      ``{"epoch","metric","metric_name","model_class","state_dict",["optimizer"],["scheduler"],["num_classes"],["embedding_dim"],["extra"]}``.
+    """
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # Canonical filename (stable path used by the rest of the pipeline)
+    canon_name = filename or f"best_{mode}.pth"
+    canon_path = out_path / canon_name
+
+    # Optional versioned snapshot filename (for history/audits)
+    snap_name = f"{canon_path.stem}_e{epoch:04d}_{metric_name}-{metric:.4f}.pth"
+    snap_path = out_path / snap_name
+
+    # Build checkpoint package
+    pkg: dict = {
+        "epoch": int(epoch),
+        "metric": float(metric),
+        "metric_name": str(metric_name),
+        "model_class": model.__class__.__name__,
+        "state_dict": model.state_dict(),
+        "saved_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    # Nice to have: model attributes if present
+    if hasattr(model, "num_classes"):
+        try:
+            pkg["num_classes"] = int(getattr(model, "num_classes"))
+        except Exception:
+            pass
+    if hasattr(model, "embedding_dim"):
+        try:
+            pkg["embedding_dim"] = int(getattr(model, "embedding_dim"))
+        except Exception:
+            pass
+
+    if optimizer is not None:
+        pkg["optimizer"] = optimizer.state_dict()
+    if scheduler is not None:
+        try:
+            pkg["scheduler"] = scheduler.state_dict()
+        except Exception:
+            # Some schedulers don't implement state_dict; ignore gracefully
+            logger.debug("Scheduler has no state_dict; skipping.")
+
+    if extra:
+        pkg["extra"] = dict(extra)
+
+    # Atomic write: save to a temp file in the same directory, then replace
+    tmp_path = out_path / f".{canon_path.name}.tmp.{os.getpid()}"
+    torch.save(pkg, tmp_path)
+    tmp_path.replace(canon_path)  # atomic on same filesystem
+
+    # Optional snapshot
+    if keep_snapshot:
+        try:
+            torch.save(pkg, snap_path)
+        except Exception as e:
+            logger.warning(f"Could not write snapshot {snap_path}: {e}")
+
+    # JSON sidecar with checksum & metadata
+    if write_meta_json:
+        try:
+            sha = _sha256(canon_path)
+            meta = {
+                "file": str(canon_path),
+                "epoch": pkg["epoch"],
+                "metric": pkg["metric"],
+                "metric_name": pkg["metric_name"],
+                "model_class": pkg["model_class"],
+                "num_classes": pkg.get("num_classes"),
+                "embedding_dim": pkg.get("embedding_dim"),
+                "saved_at": pkg["saved_at"],
+                "sha256": sha,
+                "bytes": canon_path.stat().st_size,
+            }
+            if extra:
+                meta["extra"] = extra
+            meta_path = canon_path.with_suffix(".json")
+            with meta_path.open("w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not write JSON sidecar for {canon_path}: {e}")
+
+    logger.info(
+        f"[✓] New best ({mode}) → {canon_path}  "
+        f"({metric_name}={metric:.4f}, epoch={epoch})"
     )
-
-    print(f"[✓]   New best ({mode}) saved →  {fname}  (metric={metric:.4f})")
+    return canon_path
 
 
 def dataloader_to_numpy(dataloader):

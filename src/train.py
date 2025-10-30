@@ -1,43 +1,62 @@
-# train.py
+# src/train.py
+"""Training loops (standard and epoch-cached)."""
+import copy
+import logging
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
 import torch
 import torch.nn as nn
 from tqdm.auto import tqdm
-import copy
-from src.utils import save_best
-from pathlib import Path
-import pandas as pd
 
-import logging
+from src.utils import save_best
 
 logger = logging.getLogger(__name__)
 
 
 def train_model(
-    model,
-    train_loader,
-    val_loader,
-    device,
-    num_epochs=10,
-    initial_lr=1e-3,
-    patience=15,
-    checkpoint_path: str | None = None,
-):
-    """
-    Trains a model with a progress bar and calls validation at the end.
-    • CosineAnnealingWarmRestarts scheduler
-    • Early stopping
-    • If `checkpoint_path` is given, the best weights are saved there.
+    model: torch.nn.Module,
+    train_loader: torch.utils.data.DataLoader,
+    val_loader: Optional[torch.utils.data.DataLoader],
+    device: torch.device,
+    num_epochs: int = 10,
+    initial_lr: float = 1e-3,
+    patience: int = 15,
+    checkpoint_path: Optional[str | Path] = None,
+) -> torch.nn.Module:
+    """Standard training loop with validation, early-stopping, and checkpointing.
 
-    Parameters:
-    -----------
-    model : nn.Module
-        The model to train.
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Model to train. ``forward`` must return logits.
     train_loader : DataLoader
-        DataLoader for the training set.
+        Training data loader.
+    val_loader : DataLoader or None
+        Validation data loader. If ``None``, no early stopping or checkpoints
+        are performed based on validation metrics.
     device : torch.device
-        Device to run the training on ('cpu', 'cuda', etc.).
-    num_epochs : int
-        Number of epochs to train.
+        Target device.
+    num_epochs : int, default=10
+        Maximum number of epochs.
+    initial_lr : float, default=1e-3
+        Initial learning rate for AdamW.
+    patience : int, default=15
+        Early stopping patience based on validation accuracy.
+    checkpoint_path : str or None, optional
+        Output directory for saving the best model. If ``None``, defaults
+        to ``'../res/checkpoints'``.
+
+    Returns
+    -------
+    torch.nn.Module
+        The model with best-validation weights loaded.
+
+    Notes
+    -----
+    - Uses ``CosineAnnealingWarmRestarts`` scheduler.
+    - Best model is determined by **highest validation accuracy**.
     """
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=initial_lr, weight_decay=1e-4)
@@ -59,7 +78,7 @@ def train_model(
         with tqdm(
             total=num_batches, desc=f"Epoch {epoch}/{num_epochs}", unit="batch"
         ) as pbar:
-            for batch_idx, (inputs, labels) in enumerate(train_loader):
+            for inputs, labels in train_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
                 optimizer.zero_grad()
 
@@ -70,7 +89,6 @@ def train_model(
                 # Backward pass and optimize
                 loss.backward()
                 optimizer.step()
-
                 running_loss += loss.item() * inputs.size(0)
                 pbar.update(1)
                 pbar.set_postfix(loss=loss.item())
@@ -81,19 +99,18 @@ def train_model(
         # ── Validation ──
         if val_loader is not None:
             model.eval()
-            val_loss = 0.0
+            val_loss_sum = 0.0
             correct = total = 0
             with torch.no_grad():
                 for inputs, labels in val_loader:
                     inputs, labels = inputs.to(device), labels.to(device)
                     outputs = model(inputs)
                     loss = criterion(outputs, labels)
-
-                    val_loss += loss.item() * inputs.size(0)
+                    val_loss_sum += loss.item() * inputs.size(0)
                     _, predicted = torch.max(outputs, 1)
                     total += labels.size(0)
                     correct += (predicted == labels).sum().item()
-            avg_val_loss = val_loss / len(val_loader.dataset)
+            avg_val_loss = val_loss_sum / len(val_loader.dataset)
             val_acc = correct / total
             logger.info(
                 f"Validation Loss: {avg_val_loss:.4f}, Accuracy: {val_acc*100:.2f}%"
@@ -104,12 +121,7 @@ def train_model(
                 best_val_acc = val_acc
                 best_state_dict = copy.deepcopy(model.state_dict())
                 epochs_no_improve = 0
-
-                if checkpoint_path:
-                    check_path = checkpoint_path
-                else:
-                    check_path = "../res/checkpoints"
-
+                check_path = checkpoint_path or "../res/checkpoints"
                 num_classes = model.num_classes
                 save_best(
                     model,
@@ -137,27 +149,50 @@ def train_model(
 def train_epoch_cached(
     model: torch.nn.Module,
     cached_dataset,
-    val_loader: torch.utils.data.DataLoader,
+    val_loader: Optional[torch.utils.data.DataLoader],
     device: torch.device,
     num_epochs: int = 20,
     batch_size: int = 512,
     initial_lr: float = 1e-3,
     patience: int = 15,
-    checkpoint_path: str | None = None,
-    history_path: str | Path | None = None,
-):
-    """
-    Train a model on an EpochCachedDataset.
+    checkpoint_path: Optional[str | Path] = None,
+    history_path: Optional[str | Path] = None,
+) -> torch.nn.Module:
+    """Training loop for datasets that refresh synthetic labels each epoch.
 
-    • `cached_dataset.refresh(epoch)` is called at the start of every epoch to
-      redraw which normal windows become synthetic faults, keeping labels stable *within* the epoch.
-    • Early stopping and CosineAnnealingWarmRestarts are preserved.
-    • If `checkpoint_path` is given, the best weights are saved there.
-    • If `history_path` is provided, a CSV with columns [train_loss, val_loss] is written at the end.
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Model to train. ``forward`` must return logits.
+    cached_dataset : EpochCachedDataset-like
+        Dataset that implements ``refresh(epoch: int)`` and can be wrapped by a
+        DataLoader each epoch.
+    val_loader : DataLoader or None
+        Validation data loader.
+    device : torch.device
+        Target device.
+    num_epochs : int, default=20
+        Maximum number of epochs.
+    batch_size : int, default=512
+        Training batch size.
+    initial_lr : float, default=1e-3
+        Initial learning rate for AdamW.
+    patience : int, default=15
+        Early stopping patience based on validation accuracy.
+    checkpoint_path : str or None, optional
+        Directory to save the best model.
+    history_path : str or Path or None, optional
+        If given, CSV with ``[epoch, train_loss, val_loss]`` will be written.
 
     Returns
     -------
-    model  -  with the best-validation weights loaded.
+    torch.nn.Module
+        The model with best-validation weights loaded.
+
+    Notes
+    -----
+    - At the start of each epoch, ``cached_dataset.refresh(epoch)`` is called.
+    - Uses ``CosineAnnealingWarmRestarts`` scheduler.
     """
     # Loss and optimizer setup
     criterion = nn.CrossEntropyLoss()
@@ -199,7 +234,7 @@ def train_epoch_cached(
         with tqdm(
             total=num_batches, desc=f"Epoch {epoch}/{num_epochs}", unit="batch"
         ) as pbar:
-            for batch_idx, (x, y) in enumerate(train_loader):
+            for x, y in train_loader:
                 x, y = x.to(device), y.to(device)
                 optimizer.zero_grad()
                 out = model(x)
@@ -219,11 +254,9 @@ def train_epoch_cached(
         train_acc = running_corr / total
         train_losses.append(train_loss)
         logger.info(
-            f"Epoch [{epoch}/{num_epochs}] "
-            f"train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}"
+            f"Epoch [{epoch}/{num_epochs}] train-loss: {train_loss:.4f}  acc: {train_acc:6.2%}"
         )
 
-        # ── 3.  Validation phase ─────────────────────────────────
         if val_loader is not None:
             model.eval()
             val_loss_sum = 0.0
@@ -248,12 +281,7 @@ def train_epoch_cached(
                 best_val_acc = val_acc
                 best_state_dict = copy.deepcopy(model.state_dict())
                 epochs_no_improve = 0
-
-                if checkpoint_path:
-                    check_path = checkpoint_path
-                else:
-                    check_path = "../res/checkpoints"
-
+                check_path = checkpoint_path or "../res/checkpoints"
                 num_classes = model.num_classes
                 save_best(
                     model,
@@ -279,11 +307,7 @@ def train_epoch_cached(
     if history_path:
         history_path = Path(history_path)
         df = pd.DataFrame(
-            {
-                "epoch": epochs,
-                "train_loss": train_losses,
-                "val_loss": val_losses,
-            }
+            {"epoch": epochs, "train_loss": train_losses, "val_loss": val_losses}
         )
         df.to_csv(history_path, index=False)
         logger.info(f"Saved training history to {history_path}")
