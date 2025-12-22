@@ -19,12 +19,14 @@ processing_parameters:
   noise_factor: 0.0
   include_negative_peaks: true
   random_peak_position: true
-  fault_types_to_use: 
+  peak_mode: "mcsa"
+  peak_location_seed: null
+  fault_types_to_use:
   - inter-turn short circuits
   - rotor bar defect
   loads_to_use: []
   phases_to_use: []
-  
+
 training_parameters:
   # Number of epochs for binary classification training
   num_epochs_binary: 10
@@ -32,7 +34,7 @@ training_parameters:
   num_epochs_multi: 10
   initial_lr: 0.001
   patience: 10
-  
+
 data_parameters:
   # Batch size for training DataLoader
   batch_size: 128
@@ -49,7 +51,7 @@ dataset_parameters:
   train_dataset_cls: HybridAugFaultDataset
   train_dataset_kwargs:
     # faults_per_window
-    K: 2 
+    K: 2
     # noisy_normal_per_window
     R: 1
     keep_orig: true

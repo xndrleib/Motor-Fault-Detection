@@ -27,7 +27,9 @@ processing_parameters:
   noise_factor: 0.0
   include_negative_peaks: true
   random_peak_position: true
-  fault_types_to_use: 
+  peak_mode: "mcsa"
+  peak_location_seed: null
+  fault_types_to_use:
   # - bearing defect
   - inter-turn short circuits
   - rotor bar defect

@@ -66,6 +66,7 @@ from src.inference import inference_model
 from src.models import ResNet, ResidualBlock, CNN
 from src.normalization import Normalizer
 from src.train import train_epoch_cached
+from src.sgda_peak_selection import resolve_peak_location_seed, select_peak_frequencies
 from src.utils import set_all_seeds, load_yaml
 
 
@@ -543,9 +544,17 @@ def main() -> None:
         },
         "bearing defect": {"engine_config": engine_config["mcsa"]},
     }
-    fault_freqs = {ft: ANOMALY_FREQS[ft](**MCSA_cfg[ft]) for ft in fault_types_to_use}
-    experiment.log_parameters(fault_freqs)
-    logging.info(f"Fault frequencies calculated: {fault_freqs}")
+    fault_freqs_physics = {
+        ft: np.asarray(ANOMALY_FREQS[ft](**MCSA_cfg[ft]), dtype=float)
+        for ft in fault_types_to_use
+    }
+    experiment.log_parameters(
+        {
+            f"mcsa_freqs_{ft}": fault_freqs_physics[ft].tolist()
+            for ft in fault_freqs_physics
+        }
+    )
+    logging.info(f"Fault frequencies calculated (MCSA): {fault_freqs_physics}")
 
     # Preprocessing (segmentation + spectrum)
     inj_cfg = train_params["processing_parameters"]
@@ -574,6 +583,35 @@ def main() -> None:
     logging.info(
         f"Converted peak segment from Hz to bins: {inj_cfg['peak_segment']} Hz -> {peak_segment_bins}"
     )
+
+    peak_mode = str(inj_cfg.get("peak_mode", "mcsa")).lower()
+    peak_seed = resolve_peak_location_seed(
+        train_params.get("seed", 42),
+        inj_cfg.get("peak_location_seed", None),
+    )
+    if peak_mode == "random" and peak_seed is None:
+        raise ValueError("peak_mode='random' requires a deterministic peak_location_seed.")
+
+    fault_freqs_inject = select_peak_frequencies(
+        fault_freqs_physics,
+        freqs,
+        peak_mode,
+        rng_seed=peak_seed,
+        margin_bins=peak_segment_bins,
+    )
+    experiment.log_parameter("peak_mode", peak_mode)
+    experiment.log_parameter("peak_location_seed", peak_seed)
+    experiment.log_parameters(
+        {
+            f"n_peaks_{ft}": len(freqs_list)
+            for ft, freqs_list in fault_freqs_inject.items()
+        }
+    )
+    logging.info(
+        "Peak selection mode: %s | peak_location_seed=%s", peak_mode, peak_seed
+    )
+    peak_counts = {k: len(v) for k, v in fault_freqs_inject.items()}
+    logging.info("Per-fault peak counts: %s", peak_counts)
 
     gaussian_injector = GaussianPeakInjector(
         peak_segment=peak_segment_bins,
@@ -646,7 +684,7 @@ def main() -> None:
         segments=segments[indices],
         seg_meta_df=seg_meta_df.iloc[indices],
         freqs=freqs,
-        fault_freqs=fault_freqs,
+        fault_freqs=fault_freqs_inject,
         mode=task,
         test_size=train_params["dataset_parameters"]["test_size"],
         val_size=train_params["dataset_parameters"]["val_size"],
@@ -669,7 +707,7 @@ def main() -> None:
     # Optional spectral prior attention
     if train_params["model_parameters"]["attention_module"]:
         mask = make_importance_mask(
-            freqs, fault_freqs, delta_hz=inj_cfg["peak_segment"]
+            freqs, fault_freqs_physics, delta_hz=inj_cfg["peak_segment"]
         )
         mask_torch = torch.tensor(mask, dtype=torch.float32)[None, None, :].to(device)
         torch.save(mask_torch, exp_dir / "mask.pt")
