@@ -32,6 +32,24 @@ python run_peak_ablation.py \
   --runs-dir ../res/runs
 ```
 
+## Parallel SLURM workflow (preferred)
+
+1) Generate configs (writes `config_index.csv`):
+```cli
+python training_configs/sgda_peak_ablation/make_configs.py \
+  --base-cfg training_configs/train_engine-2.yml \
+  --out-dir training_configs/sgda_peak_ablation \
+  --seeds 1 2 3 4 5 \
+  --modes mcsa random \
+  --disable-early-stopping
+```
+2) Update the array in `training_configs/sgda_peak_ablation/submit_peak_ablation.sbatch`
+   to match the generated filenames (or keep the defaults if names match).
+3) Submit the job array:
+```cli
+sbatch training_configs/sgda_peak_ablation/submit_peak_ablation.sbatch
+```
+
 Optional:
 - Override seeds: `--seeds 11 12 13 14 15`
 - Limit modes: `--modes mcsa` or `--modes random`
