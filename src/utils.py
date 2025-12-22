@@ -1,10 +1,21 @@
 # utils.py
 import datetime
+import hashlib
+import json
+import logging
+import os
 import random
 import shutil
+from pathlib import Path
+from typing import Optional, Literal
 
 import numpy as np
+import torch
 import yaml
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import _LRScheduler as LRScheduler  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 def set_all_seeds(seed=42):
@@ -25,21 +36,6 @@ def create_experiment_folder(base_dir="../res", exp_name="engine_1"):
     full_path.mkdir(parents=True, exist_ok=False)
     print(f"[✓] Experiment results folder: {full_path.resolve()}")
     return full_path
-
-
-import json
-import os
-import hashlib
-import logging
-from pathlib import Path
-from datetime import datetime
-from typing import Optional, Literal
-
-import torch
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import _LRScheduler as LRScheduler  # type: ignore
-
-logger = logging.getLogger(__name__)
 
 
 def _sha256(path: Path) -> str:
@@ -125,7 +121,7 @@ def save_best(
         "metric_name": str(metric_name),
         "model_class": model.__class__.__name__,
         "state_dict": model.state_dict(),
-        "saved_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "saved_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
     # Nice to have: model attributes if present
     if hasattr(model, "num_classes"):

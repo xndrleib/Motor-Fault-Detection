@@ -8,13 +8,19 @@ labels, predictions, and test indices) to compressed ``.npz`` files.
 
 Outputs
 -------
-In the experiment directory (``exp_dir``), this script saves:
+In the run directory (``exp_dir``), this script saves:
 - ``segments_metadata_test_[binary|multiclass]_pred.csv`` : predictions + scores
 - ``test_arrays_[binary|multiclass].npz`` : probs/logits/embeddings/labels/preds/index
 - ``test_embeddings_[binary|multiclass].npy`` : embeddings only
 - ``test_logits_[binary|multiclass].npy`` : logits only
 - ``test_probs_[binary|multiclass].npy`` : softmax probabilities only
 - Confusion matrix figures (PNG/PDF) and optional importance mask figure
+
+Directory layout
+----------------
+- Default: results go to ``<repo_root>/res/runs/{run-name}/`` where ``run-name`` is
+  derived from the config base name + timestamp.
+- If ``--exp-name`` is provided: ``<repo_root>/res/runs/{exp-name}/{run-name}/``.
 
 Notes
 -----
@@ -60,7 +66,15 @@ from src.inference import inference_model
 from src.models import ResNet, ResidualBlock, CNN
 from src.normalization import Normalizer
 from src.train import train_epoch_cached
-from src.utils import set_all_seeds, create_experiment_folder, load_yaml
+from src.utils import set_all_seeds, load_yaml
+
+
+# ---- Paths & logging ---------------------------------------------------------
+
+
+def _repo_root() -> Path:
+    """Return repository root assuming this file is at <repo_root>/experiments/train.py."""
+    return Path(__file__).resolve().parents[1]
 
 
 def setup_logger(log_dir: str, log_file: str = "training.log") -> None:
@@ -100,21 +114,22 @@ def setup_logger(log_dir: str, log_file: str = "training.log") -> None:
 
 
 def load_configurations() -> dict:
-    """Load general experiment configuration from ``../cfg.yaml``.
+    """Load general experiment configuration from ``<repo_root>/cfg.yaml``.
 
     Returns
     -------
     dict
         Parsed YAML configuration.
     """
-    with open("../cfg.yaml", "r") as f:
+    cfg_path = _repo_root() / "cfg.yaml"
+    with open(cfg_path, "r") as f:
         config = yaml.safe_load(f)
-    logging.info("Loaded main configuration from ../cfg.yaml.")
+    logging.info(f"Loaded main configuration from {cfg_path}.")
     return config
 
 
 def start_experiment(
-    config: dict, online: bool = True
+    config: dict, online: bool = True, name: str | None = None
 ) -> Tuple[comet_ml.CometExperiment, str]:
     """Start a Comet ML experiment and log source code.
 
@@ -124,6 +139,8 @@ def start_experiment(
         Dictionary with keys ``API_KEY``, ``PROJECT_NAME``, and ``WORKSPACE``.
     online : bool, default=True
         If ``False``, runs offline (local logging only).
+    name :
+
 
     Returns
     -------
@@ -137,62 +154,57 @@ def start_experiment(
         online=online,
     )
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    experiment.set_name(f"Script Run: {now}")
+    experiment.set_name(name if name else f"Script Run: {now}")
     experiment.log_code()
     logging.info(f"Started Comet ML experiment at {now}")
     return experiment, now
 
 
-def prepare_directories(engine: str, config_name: str, res_dir: str = "../res"):
+def prepare_directories(
+    engine: str,
+    runs_dir: str | Path | None = None,
+    exp_name: str | None = None,
+    run_name: str | None = None,
+):
     """Create output directories for experiment artifacts.
 
-    Parameters
-    ----------
-    engine : str
-        Engine label from configuration.
-    config_name : str
-        Training configuration filename (used to name the experiment folder).
-    res_dir : str, default="../res"
-        Root results directory.
-
-    Returns
-    -------
-    tuple
-        ``(base_dir, exp_dir, indices_dir, checkpoints_dir, fig_dir, log_dir)``
-        as ``pathlib.Path`` objects.
+    Behavior
+    --------
+    - Root runs dir defaults to ``<repo_root>/res/runs``.
+    - If ``exp_name`` is None → ``exp_root = runs_dir/`` else ``runs_dir/exp_name/``.
+    - ``exp_dir`` (the run folder) = ``exp_root/run_name/``.
     """
-    base_dir = Path(f"../dataset/{engine.replace('-', '_')}")
-    res_dir = Path(res_dir)
+    repo = _repo_root()
+    runs_root = Path(runs_dir) if runs_dir is not None else (repo / "res" / "runs")
+    runs_root.mkdir(parents=True, exist_ok=True)
 
-    # Properly strip the YAML suffix if present
-    if config_name and config_name.endswith((".yml", ".yaml")):
-        config_name = config_name.rsplit(".", 1)[0]
+    if not run_name:
+        raise ValueError("prepare_directories requires a non-empty run_name.")
 
-    exp_dir = create_experiment_folder(res_dir, config_name)
+    exp_root = runs_root / exp_name if exp_name else runs_root
+    exp_dir = exp_root / run_name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+
+    # dataset base (under repo root)
+    base_dir = repo / "dataset" / engine.replace("-", "_")
+
+    # standard subfolders
     indices_dir = exp_dir / "indices"
     checkpoints_dir = exp_dir / "checkpoints"
     fig_dir = exp_dir / "figs"
     log_dir = exp_dir / "logs"
     for d in [indices_dir, checkpoints_dir, fig_dir, log_dir]:
         d.mkdir(exist_ok=True, parents=True)
-    logging.info(f"Experiment directories created at {exp_dir}")
+
+    logging.info(f"Run directory created at {exp_dir.resolve()}")
     return base_dir, exp_dir, indices_dir, checkpoints_dir, fig_dir, log_dir
 
 
+# ---- Helpers -----------------------------------------------------------------
+
+
 def save_label_encoder(enc, exp_dir: str | Path) -> None:
-    """Persist label encoder used for multiclass tasks.
-
-    Parameters
-    ----------
-    enc : sklearn.preprocessing.LabelEncoder
-        Fitted encoder mapping string labels to integers.
-    exp_dir : str or Path
-        Experiment directory where the pickle is written.
-
-    Returns
-    -------
-    None
-    """
+    """Persist label encoder used for multiclass tasks."""
     enc_path = Path(exp_dir) / "label_encoder_multiclass.pkl"
     joblib.dump(enc, enc_path, compress=3)
     logging.info(f"Saved LabelEncoder to {enc_path.resolve()}")
@@ -201,25 +213,7 @@ def save_label_encoder(enc, exp_dir: str | Path) -> None:
 def plot_and_save_confusion_matrix(
     cm, labels, fig_dir: Path, fname_prefix: str, experiment
 ) -> None:
-    """Plot, save, and log a confusion matrix.
-
-    Parameters
-    ----------
-    cm : np.ndarray of shape (C, C)
-        Confusion matrix counts.
-    labels : list[str]
-        Class display names in order of indices.
-    fig_dir : Path
-        Output directory for figures.
-    fname_prefix : str
-        File prefix (PNG/PDF will be produced).
-    experiment : comet_ml.CometExperiment
-        Comet experiment for figure logging.
-
-    Returns
-    -------
-    None
-    """
+    """Plot, save, and log a confusion matrix."""
     fig, ax = plt.subplots(figsize=(5, 4))
     sns.heatmap(
         cm,
@@ -245,26 +239,7 @@ def plot_and_save_confusion_matrix(
 def save_configs(
     train_cfg_path: str | Path, engine_cfg_path: str | Path, exp_dir: str | Path
 ) -> None:
-    """Copy training and engine configuration files into the experiment folder.
-
-    Parameters
-    ----------
-    train_cfg_path : str or Path
-        Path to the training configuration YAML file.
-    engine_cfg_path : str or Path
-        Path to the engine configuration YAML file.
-    exp_dir : str or Path
-        Path to the experiment directory where configs will be saved.
-
-    Raises
-    ------
-    FileNotFoundError
-        If either source config file does not exist.
-
-    Returns
-    -------
-    None
-    """
+    """Copy training and engine configuration files into the run folder."""
     train_cfg_path = Path(train_cfg_path)
     engine_cfg_path = Path(engine_cfg_path)
     exp_dir = Path(exp_dir)
@@ -285,6 +260,9 @@ def save_configs(
     logging.info(f"Copied engine   config to {dest_engine}")
 
 
+# ---- Train & Eval ------------------------------------------------------------
+
+
 def train_and_eval(
     model,
     datasets,
@@ -299,47 +277,7 @@ def train_and_eval(
     experiment,
     task: str,
 ) -> None:
-    """Train the model, evaluate on test set, and save artifacts.
-
-    Parameters
-    ----------
-    model : torch.nn.Module
-        Model to train (logits from ``forward``; embeddings from ``forward_features``).
-    datasets : dict
-        Output of ``create_balanced_datasets`` including ``train``, ``val``,
-        ``test``, and metadata such as ``label_encoder`` (multiclass) and
-        ``test_idx``.
-    seg_meta_df : pandas.DataFrame
-        Segment-level metadata indexed by ``measurement_id``.
-    val_loader : DataLoader
-        Validation loader.
-    test_loader : DataLoader
-        Test loader.
-    device : torch.device
-        Target device.
-    train_params : dict
-        Training configuration dictionary.
-    checkpoints_dir : Path
-        Directory for model checkpoints.
-    exp_dir : Path
-        Experiment directory for artifacts.
-    fig_dir : Path
-        Directory for figures.
-    experiment : comet_ml.CometExperiment
-        Comet experiment handle.
-    task : {"binary", "multiclass"}
-        Task type controlling epochs and label handling.
-
-    Returns
-    -------
-    None
-
-    Side Effects
-    ------------
-    - Saves predictions CSV with per-class probabilities.
-    - Saves compressed NPZ with ``probs/logits/embeddings/labels/preds/test_index``.
-    - Logs figures and models to Comet.
-    """
+    """Train the model, evaluate on test set, and save artifacts."""
     logging.info(f"Training model for {task} classification...")
 
     num_epochs = (
@@ -491,23 +429,11 @@ def train_and_eval(
     logging.info(f"{task.capitalize()} model logged to experiment: {model_file}")
 
 
+# ---- Main --------------------------------------------------------------------
+
+
 def main() -> None:
-    """CLI entry-point: load configs, prepare data, train/eval, and log artifacts.
-
-    Reads the training config (``--cfg``) to determine dataset/model/task
-    settings; prepares folders; initializes Comet; builds datasets with optional
-    spectral-prior attention mask; trains the configured model; evaluates on
-    the test set; and saves/logs all artifacts.
-
-    Returns
-    -------
-    None
-
-    Raises
-    ------
-    RuntimeError
-        If neither the config nor ``--task`` provides a valid task.
-    """
+    """CLI entry-point: load configs, prepare data, train/eval, and log artifacts."""
     parser = argparse.ArgumentParser(
         description="Train and evaluate model. Reads 'engineLabel' and 'task' from training config."
     )
@@ -517,15 +443,30 @@ def main() -> None:
         help="[optional] Override: Task to train: binary or multiclass",
     )
     parser.add_argument(
-        "--cfg", type=str, default=None, help="Training config YAML filename"
+        "--cfg", type=str, required=True, help="Path to training config YAML"
+    )
+    parser.add_argument(
+        "--exp-name",
+        type=str,
+        default=None,
+        help="Optional experiment name. If set, results go to <repo_root>/res/runs/{exp-name}/{run-name}.",
+    )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Optional run name. Defaults to <cfg basename>_<timestamp>.",
+    )
+    parser.add_argument(
+        "--runs-dir",
+        type=str,
+        default=None,
+        help="Override runs root directory. Default is <repo_root>/res/runs.",
     )
     args = parser.parse_args()
 
-    # Determine config file
-    train_cfg_path = f"../training_configs/{args.cfg}"
-
     # Load training configuration
-    train_params = load_yaml(train_cfg_path)
+    train_params = load_yaml(args.cfg)
     engine = train_params.get("engineLabel", None)
     task_from_cfg = train_params.get("task", None)
     task = task_from_cfg if task_from_cfg else args.task
@@ -534,20 +475,28 @@ def main() -> None:
             "Task must be specified in training configuration (task: binary|multiclass) or via --task CLI argument."
         )
 
+    # Derive a unique run name if not provided: <cfg stem>_<YYYY-mm-dd_HH-MM-SS>
+    cfg_stem = Path(args.cfg).stem
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_name = args.run_name if args.run_name else f"{cfg_stem}_{timestamp}"
+
     # Prepare directories & logger
-    base_dir, exp_dir, indices_dir, checkpoints_dir, fig_dir, log_dir = (
-        prepare_directories(engine, args.cfg)
+    base_dir, exp_dir, indices_dir, checkpoints_dir, fig_dir, log_dir = prepare_directories(
+        engine=engine, runs_dir=args.runs_dir, exp_name=args.exp_name, run_name=run_name
     )
-    save_configs(train_cfg_path, base_dir / "engine.yml", exp_dir)
+    save_configs(args.cfg, base_dir / "engine.yml", exp_dir)
     setup_logger(str(log_dir))
     logging.info(
         f"Starting Training/Evaluation Script for engine '{engine}', task '{task}'"
     )
+    logging.info(f"Runs root: {(Path(args.runs_dir) if args.runs_dir else (_repo_root() / 'res' / 'runs')).resolve()}")
+    logging.info(f"Experiment: {args.exp_name or '(none)'} | Run: {run_name}")
 
     # Start Comet and set seeds/device
     config = load_configurations()
-    experiment, run_time = start_experiment(
-        config, train_params.get("comet_online", True)
+    comet_name = f"{args.exp_name}/{run_name}" if args.exp_name else run_name
+    experiment, _ = start_experiment(
+        config, train_params.get("comet_online", True), name=comet_name
     )
 
     set_all_seeds(train_params.get("seed", 42))
@@ -568,6 +517,8 @@ def main() -> None:
     experiment.log_parameter("exp_dir", str(exp_dir))
     experiment.log_parameter("engine", engine)
     experiment.log_parameter("task", task)
+    experiment.log_parameter("exp_name", args.exp_name or "")
+    experiment.log_parameter("run_name", run_name)
 
     # Load engine config & metadata
     engine_config = load_yaml(base_dir / "engine.yml")
