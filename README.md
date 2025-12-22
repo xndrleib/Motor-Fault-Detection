@@ -56,11 +56,3 @@ During training an experiment directory is created inside `res/` containing chec
 ## Inference
 
 The `src/inference.py` module provides a helper function to run a trained model on a `DataLoader`. Predictions on the test set are automatically generated at the end of training and saved alongside other results in the experiment directory.
-
-## Notebooks
-
-A series of Jupyter notebooks demonstrate preprocessing, model training and evaluation steps. Notable notebooks include:
-
-- `01_Data-Preprocessing.ipynb` – Raw signal processing and segmentation
-- `04_Unified-Training-Pipeline.ipynb` – End‑to‑end pipeline
-- `09_Predictions-Analysis.ipynb` – Visualization of model outputs
