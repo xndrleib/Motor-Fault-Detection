@@ -26,10 +26,9 @@ Notes:
 
 ## Run the ablation (5 seeds × 2 modes)
 ```cli
-python run_peak_ablation.py \
-  --cfg ../training_configs/train_engine-2.yml \
-  --exp-name sgda_peak_ablation \
-  --runs-dir ../res/runs
+python experiments/run_peak_ablation.py \
+  --cfg training_configs/train_engine-2.yml \
+  --exp-name sgda_peak_ablation
 ```
 
 ## Parallel SLURM workflow (preferred)
@@ -43,8 +42,10 @@ python training_configs/sgda_peak_ablation/make_configs.py \
   --modes mcsa random \
   --disable-early-stopping
 ```
+
 2) Update the array in `training_configs/sgda_peak_ablation/submit_peak_ablation.sbatch`
    to match the generated filenames (or keep the defaults if names match).
+
 3) Submit the job array:
 ```cli
 sbatch training_configs/sgda_peak_ablation/submit_peak_ablation.sbatch
@@ -60,3 +61,19 @@ All runs are written under:
 res/runs/sgda_peak_ablation/
 ```
 with a per-run config copy and a `ablation_manifest.json`.
+
+## Aggregate results across seeds
+Once runs are available (locally or on the cluster), aggregate metrics and
+compare MCSA vs random with mean ± 3 std bands:
+
+```cli
+python experiments/peak_ablation_results.py \
+  --runs-dir res/runs/sgda_peak_ablation \
+  --plot-loss
+```
+
+Outputs are written to:
+```
+res/runs/sgda_peak_ablation/peak_ablation_results/
+```
+including per-run metrics, aggregated summaries, and comparison plots.
