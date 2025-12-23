@@ -585,6 +585,28 @@ def main() -> None:
     )
 
     peak_mode = str(inj_cfg.get("peak_mode", "mcsa")).lower()
+    random_peak_count_range = inj_cfg.get("random_peak_count_range", None)
+    if random_peak_count_range is not None:
+        if (
+            not isinstance(random_peak_count_range, (list, tuple))
+            or len(random_peak_count_range) != 2
+        ):
+            raise ValueError(
+                "processing_parameters.random_peak_count_range must be a 2-element list/tuple."
+            )
+        random_peak_count_range = (
+            int(random_peak_count_range[0]),
+            int(random_peak_count_range[1]),
+        )
+        if random_peak_count_range[0] < 1 or random_peak_count_range[1] < random_peak_count_range[0]:
+            raise ValueError(
+                "processing_parameters.random_peak_count_range must be >= 1 and min <= max."
+            )
+        if peak_mode != "random":
+            logging.info(
+                "random_peak_count_range is set but peak_mode=%s; value will be ignored.",
+                peak_mode,
+            )
     peak_seed = resolve_peak_location_seed(
         train_params.get("seed", 42),
         inj_cfg.get("peak_location_seed", None),
@@ -598,6 +620,7 @@ def main() -> None:
         peak_mode,
         rng_seed=peak_seed,
         margin_bins=peak_segment_bins,
+        random_peak_count_range=random_peak_count_range,
     )
     experiment.log_parameter("peak_mode", peak_mode)
     experiment.log_parameter("peak_location_seed", peak_seed)

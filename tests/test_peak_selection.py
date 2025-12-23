@@ -34,6 +34,33 @@ def test_select_peak_frequencies_random_deterministic() -> None:
     assert len(out1["fault_b"]) == len(fault_freqs["fault_b"])
 
 
+def test_select_peak_frequencies_random_count_range() -> None:
+    fft_freqs = np.arange(0.0, 100.0, 1.0)
+    fault_freqs = {"fault_a": [10.0, 20.0], "fault_b": [30.0, 40.0, 50.0]}
+
+    out1 = select_peak_frequencies(
+        fault_freqs,
+        fft_freqs,
+        "random",
+        rng_seed=42,
+        margin_bins=2,
+        random_peak_count_range=(1, 10),
+    )
+    out2 = select_peak_frequencies(
+        fault_freqs,
+        fft_freqs,
+        "random",
+        rng_seed=42,
+        margin_bins=2,
+        random_peak_count_range=(1, 10),
+    )
+
+    assert np.array_equal(out1["fault_a"], out2["fault_a"])
+    assert np.array_equal(out1["fault_b"], out2["fault_b"])
+    assert 1 <= len(out1["fault_a"]) <= 10
+    assert 1 <= len(out1["fault_b"]) <= 10
+
+
 def test_select_peak_frequencies_random_margin() -> None:
     fft_freqs = np.arange(0.0, 50.0, 1.0)
     fault_freqs = {"fault_a": [1.0, 2.0, 3.0]}

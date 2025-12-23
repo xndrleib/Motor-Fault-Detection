@@ -50,6 +50,7 @@ def select_peak_frequencies(
     *,
     rng_seed: int | None = None,
     margin_bins: int = 0,
+    random_peak_count_range: Sequence[int] | None = None,
 ) -> Dict[str, np.ndarray]:
     """Select per-fault peak centers for SGDA injection.
 
@@ -66,6 +67,10 @@ def select_peak_frequencies(
     margin_bins
         Minimum number of bins to keep away from FFT boundaries. This avoids
         truncated peak windows at the edges.
+    random_peak_count_range
+        Optional (min, max) range for the number of random peaks per fault.
+        Only used when ``peak_mode="random"``. If provided, each fault's peak
+        count is sampled uniformly from this inclusive range.
 
     Returns
     -------
@@ -90,6 +95,19 @@ def select_peak_frequencies(
     if mode != "random":
         raise ValueError(f"Unsupported peak_mode: {peak_mode!r}")
 
+    if random_peak_count_range is not None:
+        if len(random_peak_count_range) != 2:
+            raise ValueError(
+                "random_peak_count_range must be a (min, max) pair when provided."
+            )
+        min_peaks, max_peaks = (int(random_peak_count_range[0]), int(random_peak_count_range[1]))
+        if min_peaks < 1 or max_peaks < min_peaks:
+            raise ValueError(
+                "random_peak_count_range must be >= 1 and min <= max."
+            )
+    else:
+        min_peaks = max_peaks = None
+
     if rng_seed is None:
         logger.warning(
             "Random peak mode requested without rng_seed; results will be non-deterministic."
@@ -112,7 +130,10 @@ def select_peak_frequencies(
 
     out: Dict[str, np.ndarray] = {}
     for fault, freqs_list in fault_freqs_physics.items():
-        n_peaks = len(freqs_list)
+        if min_peaks is not None and max_peaks is not None:
+            n_peaks = int(rng.integers(min_peaks, max_peaks + 1))
+        else:
+            n_peaks = len(freqs_list)
         if n_peaks == 0:
             out[fault] = np.asarray([], dtype=float)
             continue
