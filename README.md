@@ -2,6 +2,8 @@
 
 This repository contains a complete workflow for detecting electric motor faults from time-series data. Two datasets with different motor configurations are provided along with training scripts, utility modules and Jupyter notebooks for exploration.
 
+[GDrive with materials](https://drive.google.com/drive/folders/1SMSMG9CCAJl3eiVVAotnXFL-lBQ_Um4p?usp=sharing)
+
 ## Repository Layout
 
 ```
@@ -56,3 +58,4 @@ During training an experiment directory is created inside `res/` containing chec
 ## Inference
 
 The `src/inference.py` module provides a helper function to run a trained model on a `DataLoader`. Predictions on the test set are automatically generated at the end of training and saved alongside other results in the experiment directory.
+
