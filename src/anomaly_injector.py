@@ -52,6 +52,8 @@ class GaussianPeakInjector(BaseAnomalyInjector):
 
     def inject(self, segment, fft_freqs, fault_freqs):
         modified_segment = segment.copy()
+        if callable(fault_freqs):
+            fault_freqs = fault_freqs(fft_freqs)
         for freq in fault_freqs:
             amp_val = random.uniform(*self.amplitude_range)
             sigma_val = random.uniform(*self.sigma_range)

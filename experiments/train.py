@@ -66,7 +66,12 @@ from src.inference import inference_model
 from src.models import ResNet, ResidualBlock, CNN
 from src.normalization import Normalizer
 from src.train import train_epoch_cached
-from src.sgda_peak_selection import resolve_peak_location_seed, select_peak_frequencies
+from src.sgda_peak_selection import (
+    RandomPeakSampler,
+    build_random_peak_samplers,
+    resolve_peak_location_seed,
+    select_peak_frequencies,
+)
 from src.noise_policy import NoisePolicy
 from src.utils import set_all_seeds, load_yaml
 
@@ -604,6 +609,13 @@ def main() -> None:
     )
 
     peak_mode = str(inj_cfg.get("peak_mode", "mcsa")).lower()
+    random_peak_sampling = str(inj_cfg.get("random_peak_sampling", "fixed")).lower()
+    if random_peak_sampling in {"per-sample", "per_sample"}:
+        random_peak_sampling = "per_sample"
+    if random_peak_sampling not in {"fixed", "per_sample"}:
+        raise ValueError(
+            "processing_parameters.random_peak_sampling must be 'fixed' or 'per_sample'."
+        )
     random_peak_count_range = inj_cfg.get("random_peak_count_range", None)
     if random_peak_count_range is not None:
         if (
@@ -626,6 +638,12 @@ def main() -> None:
                 "random_peak_count_range is set but peak_mode=%s; value will be ignored.",
                 peak_mode,
             )
+    if peak_mode != "random" and random_peak_sampling != "fixed":
+        logging.info(
+            "random_peak_sampling=%s ignored because peak_mode=%s.",
+            random_peak_sampling,
+            peak_mode,
+        )
     peak_seed = resolve_peak_location_seed(
         train_params.get("seed", 42),
         inj_cfg.get("peak_location_seed", None),
@@ -633,27 +651,49 @@ def main() -> None:
     if peak_mode == "random" and peak_seed is None:
         raise ValueError("peak_mode='random' requires a deterministic peak_location_seed.")
 
-    fault_freqs_inject = select_peak_frequencies(
-        fault_freqs_physics,
-        freqs,
-        peak_mode,
-        rng_seed=peak_seed,
-        margin_bins=peak_segment_bins,
-        random_peak_count_range=random_peak_count_range,
-    )
+    if peak_mode == "random" and random_peak_sampling == "per_sample":
+        fault_freqs_inject = build_random_peak_samplers(
+            fault_freqs_physics,
+            rng_seed=peak_seed,
+            margin_bins=peak_segment_bins,
+            random_peak_count_range=random_peak_count_range,
+        )
+    else:
+        fault_freqs_inject = select_peak_frequencies(
+            fault_freqs_physics,
+            freqs,
+            peak_mode,
+            rng_seed=peak_seed,
+            margin_bins=peak_segment_bins,
+            random_peak_count_range=random_peak_count_range,
+        )
     experiment.log_parameter("peak_mode", peak_mode)
     experiment.log_parameter("peak_location_seed", peak_seed)
-    experiment.log_parameters(
-        {
-            f"n_peaks_{ft}": len(freqs_list)
-            for ft, freqs_list in fault_freqs_inject.items()
-        }
-    )
+    experiment.log_parameter("random_peak_sampling", random_peak_sampling)
+    peak_ranges = {}
+    peak_counts = {}
+    for ft, freqs_list in fault_freqs_inject.items():
+        if isinstance(freqs_list, RandomPeakSampler):
+            if freqs_list.peak_count_range is not None:
+                peak_ranges[ft] = list(freqs_list.peak_count_range)
+            if freqs_list.peak_count is not None:
+                peak_counts[ft] = int(freqs_list.peak_count)
+        else:
+            peak_counts[ft] = len(freqs_list)
+    if peak_counts:
+        experiment.log_parameters(
+            {f"n_peaks_{ft}": count for ft, count in peak_counts.items()}
+        )
+    if peak_ranges:
+        experiment.log_parameters(
+            {f"n_peaks_range_{ft}": rng for ft, rng in peak_ranges.items()}
+        )
     logging.info(
         "Peak selection mode: %s | peak_location_seed=%s", peak_mode, peak_seed
     )
-    peak_counts = {k: len(v) for k, v in fault_freqs_inject.items()}
     logging.info("Per-fault peak counts: %s", peak_counts)
+    if peak_ranges:
+        logging.info("Per-fault peak count ranges: %s", peak_ranges)
 
     gaussian_injector = GaussianPeakInjector(
         peak_segment=peak_segment_bins,

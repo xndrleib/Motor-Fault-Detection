@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import os
 from torch.utils.data import Dataset
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Mapping, Optional, Tuple, List
 from sklearn.preprocessing import LabelEncoder
 from src.anomaly_injector import CompositeAnomalyInjector, NoiseInjector
 from src.data_pipeline import time_to_freq_transform
@@ -23,7 +23,7 @@ def create_balanced_datasets(
     segments: np.ndarray,
     seg_meta_df,
     freqs: np.ndarray,
-    fault_freqs: Dict[str, np.ndarray],
+    fault_freqs: Mapping[str, object],
     mode: str = "binary",
     normalizer: Optional[Normalizer] = None,
     test_size: float = 0.30,
@@ -241,7 +241,7 @@ class FaultInjectionDataset(Dataset):
         segments: np.ndarray,
         seg_meta_df,
         freqs: np.ndarray,
-        fault_freqs: Dict[str, np.ndarray],
+        fault_freqs: Mapping[str, object],
         mode: str = "binary",
         normalizer: Optional[Any] = None,
         anomaly_injector: Optional[Any] = None,

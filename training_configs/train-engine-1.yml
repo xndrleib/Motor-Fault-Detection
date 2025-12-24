@@ -22,6 +22,7 @@ processing_parameters:
   peak_mode: "mcsa"
   peak_location_seed: null
   random_peak_count_range: null
+  random_peak_sampling: fixed
   train_noise_policy: null
   fault_types_to_use:
   - inter-turn short circuits

@@ -15,13 +15,14 @@ Add these to `processing_parameters` (defaults shown):
 ```yaml
 peak_mode: "mcsa"          # "mcsa" or "random"
 peak_location_seed: null   # optional; if null uses seed + offset
+random_peak_sampling: fixed  # fixed or per_sample (random mode only)
 ```
 
 Notes:
 - Random peaks are sampled **uniformly** from FFT bins with a margin of
   `peak_segment` (in bins) to avoid truncated peak windows.
-- Peak locations are **fixed per run** (no per-epoch resampling), matching the
-  baseline behavior.
+- With `random_peak_sampling: per_sample`, random peak locations are resampled
+  for every injected synthetic window.
 - Attention masks are disabled for this ablation.
 
 ## Run the ablation (5 seeds × 2 modes)
@@ -31,6 +32,23 @@ python experiments/run_peak_ablation.py \
   --exp-name sgda_peak_ablation
 ```
 
+## Multiclass peak ablation (Normal / ITSC / RBD)
+Use the same base config and override the task when generating configs:
+```cli
+python training_configs/sgda_peak_ablation/make_configs.py \
+  --base-cfg training_configs/train_engine-2.yml \
+  --out-dir training_configs/sgda_peak_ablation_multiclass \
+  --seeds 42 43 44 45 46 \
+  --modes mcsa random \
+  --disable-early-stopping
+```
+
+Then submit as usual (see SLURM workflow) or run a single config locally:
+```cli
+cd experiments
+python train.py --cfg ../training_configs/sgda_peak_ablation/<generated>.yml --exp-name sgda_peak_ablation_multiclass
+```
+
 ## Parallel SLURM workflow (preferred)
 
 1) Generate configs (writes `config_index.csv`):
@@ -38,7 +56,7 @@ python experiments/run_peak_ablation.py \
 python training_configs/sgda_peak_ablation/make_configs.py \
   --base-cfg training_configs/train_engine-2.yml \
   --out-dir training_configs/sgda_peak_ablation \
-  --seeds 1 2 3 4 5 \
+  --seeds 42 43 44 45 46 \
   --modes mcsa random \
   --disable-early-stopping
 ```
