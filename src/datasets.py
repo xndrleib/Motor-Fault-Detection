@@ -6,6 +6,8 @@ from torch.utils.data import Dataset
 from typing import Any, Dict, Optional, Tuple, List
 from sklearn.preprocessing import LabelEncoder
 from src.anomaly_injector import CompositeAnomalyInjector, NoiseInjector
+from src.data_pipeline import time_to_freq_transform
+from src.noise_policy import NoisePolicy
 from src.normalization import Normalizer
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset
@@ -34,6 +36,7 @@ def create_balanced_datasets(
     return_indices: bool = False,
     train_dataset_cls=None,
     train_dataset_kwargs: Optional[dict] = None,
+    time_segments: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
     Split → balance → build (train, val, test) datasets.
@@ -42,6 +45,7 @@ def create_balanced_datasets(
     **training** windows before dataset construction.*
 
     Accepts a custom Dataset class (train_dataset_cls) for training set, and kwargs for its configuration.
+    Optionally accepts ``time_segments`` aligned with ``segments`` for time-domain augmentation.
     """
     if train_dataset_cls is None:
         train_dataset_cls = HybridAugFaultDataset
@@ -169,6 +173,12 @@ def create_balanced_datasets(
 
     # ── 9. construct datasets ───────────────────────────────────────────
 
+    time_trn = None
+    if time_segments is not None:
+        if len(time_segments) != len(segments):
+            raise ValueError("time_segments must have the same length as segments.")
+        time_trn = time_segments[train_idx]
+
     train_ds = train_dataset_cls(
         segments=X_trn,
         seg_meta_df=seg_meta_df.loc[train_idx],
@@ -177,6 +187,7 @@ def create_balanced_datasets(
         mode=mode,
         normalizer=normalizer,
         anomaly_injector=anomaly_injector,
+        time_segments=time_trn,
         **train_dataset_kwargs,
     )
 
@@ -491,6 +502,20 @@ class HybridAugFaultDataset(Dataset):
     K : int   - fault variants per fault-type & window  (default 2)
     R : int   - noisy-normal variants per window        (default 1)
     keep_orig : bool  - store an untouched copy of every normal window
+
+    Time-domain noise augmentation (optional)
+    -----------------------------------------
+    time_segments : np.ndarray | None
+        Raw time-domain segments aligned with ``segments``. Required if
+        ``noise_policy`` is provided.
+    noise_policy : NoisePolicy | None
+        Sampling policy for additive noise in the time domain.
+    noise_total_epochs : int | None
+        Total number of epochs (used for curriculum scheduling).
+    noise_fft_params : dict | None
+        FFT parameters: ``f_sampling``, ``cutoff_freq``, ``db``.
+    noise_rng_seed : int | None
+        RNG seed for time-domain noise sampling.
     """
 
     def __init__(
@@ -508,6 +533,11 @@ class HybridAugFaultDataset(Dataset):
         keep_orig: bool = True,
         seed: int = 0,
         cache: bool = False,
+        time_segments: Optional[np.ndarray] = None,
+        noise_policy: Optional[NoisePolicy] = None,
+        noise_total_epochs: Optional[int] = None,
+        noise_fft_params: Optional[Dict[str, object]] = None,
+        noise_rng_seed: Optional[int] = None,
     ):
         super().__init__()
         self.segments = segments
@@ -522,6 +552,25 @@ class HybridAugFaultDataset(Dataset):
         self.keep_orig = keep_orig
         self.cache_on = cache
         self.rng = np.random.RandomState(seed)
+        self.time_segments = time_segments
+        self.noise_policy = noise_policy
+        self.noise_total_epochs = noise_total_epochs
+        self.noise_epoch = 0
+        self.noise_rng = np.random.default_rng(
+            noise_rng_seed if noise_rng_seed is not None else (seed + 12345)
+        )
+        self.noise_fft_params = noise_fft_params or {}
+
+        if self.noise_policy is not None and self.time_segments is None:
+            raise ValueError("time_segments must be provided when noise_policy is set.")
+        if self.time_segments is not None and len(self.time_segments) != len(self.segments):
+            raise ValueError("time_segments must align with segments length.")
+        if self.noise_policy is not None:
+            for key in ("f_sampling", "cutoff_freq", "db"):
+                if key not in self.noise_fft_params:
+                    raise ValueError(
+                        f"noise_fft_params must include '{key}' when noise_policy is set."
+                    )
 
         if self.inj is None and (self.K > 0 or self.R > 0):
             raise ValueError("K>0 or R>0 require a non-None anomaly_injector.")
@@ -538,6 +587,7 @@ class HybridAugFaultDataset(Dataset):
     def refresh(self, epoch_seed: int | None = None) -> None:
         if epoch_seed is not None:
             self.rng.seed(epoch_seed)
+            self.noise_epoch = int(epoch_seed)
 
         self.variant_map: List[Tuple[int, str, str, int]] = []
         # tuple = (base_idx, base_state, variant_tag, fault_idx)
@@ -584,6 +634,21 @@ class HybridAugFaultDataset(Dataset):
     def _build_sample(self, entry) -> Tuple[torch.Tensor, torch.Tensor]:
         idx, base_state, tag, f_idx = entry
         seg = self.segments[idx].copy()
+
+        if self.time_segments is not None and self.noise_policy is not None:
+            time_seg = self.time_segments[idx].copy()
+            time_seg, _ = self.noise_policy.apply(
+                time_seg,
+                rng=self.noise_rng,
+                epoch=self.noise_epoch,
+                total_epochs=self.noise_total_epochs,
+            )
+            seg, _ = time_to_freq_transform(
+                time_seg,
+                f_sampling=self.noise_fft_params["f_sampling"],
+                cutoff_freq=self.noise_fft_params["cutoff_freq"],
+                db=self.noise_fft_params["db"],
+            )
 
         # --- decide variant --------------------------------------------------
         if tag.startswith("noise"):

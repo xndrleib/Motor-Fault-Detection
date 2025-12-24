@@ -30,6 +30,7 @@ processing_parameters:
   peak_mode: "mcsa"
   peak_location_seed: null
   random_peak_count_range: null
+  train_noise_policy: null
   fault_types_to_use:
   # - bearing defect
   - inter-turn short circuits

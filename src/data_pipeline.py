@@ -63,6 +63,7 @@ def preprocessing(
     cutoff_freq: int,
     apply_window: bool = False,
     db: bool = True,
+    return_time_segments: bool = False,
 ) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray]:
     """
     Convert every measurement in *metadata_df* into FFT magnitude windows.
@@ -111,6 +112,9 @@ def preprocessing(
     freqs : np.ndarray
         1-D float64 array (length = *segment_length*) with the frequency bins
         (post cut-off).
+    time_segments : np.ndarray, optional
+        If ``return_time_segments=True``, a float32 array of the raw time-domain
+        windows aligned with ``segments``.
 
     Notes
     -----
@@ -119,6 +123,7 @@ def preprocessing(
     """
     seg_rows: List[dict] = []
     seg_arrays: List[np.ndarray] = []
+    time_arrays: Optional[List[np.ndarray]] = [] if return_time_segments else None
     freqs: Optional[np.ndarray] = None
 
     for m_id, meta in tqdm(
@@ -139,6 +144,9 @@ def preprocessing(
             step=step,
             apply_window=apply_window,
         )
+        if return_time_segments:
+            assert time_arrays is not None
+            time_arrays.append(win_arr.astype(np.float32))
 
         # 3) FFT magnitude spectra
         fft_arr, freqs = perform_fft_on_segments(
@@ -178,6 +186,10 @@ def preprocessing(
     np.save(os.path.join(out_dir, "segments.npy"), segments)
     np.save(os.path.join(out_dir, "freqs.npy"), freqs)
     seg_meta_df.to_csv(os.path.join(out_dir, "segments_metadata.csv"))
+
+    if return_time_segments:
+        time_segments = np.vstack(time_arrays) if time_arrays else np.empty((0, segment_length))
+        return segments, seg_meta_df, freqs, time_segments
 
     return segments, seg_meta_df, freqs
 
@@ -860,6 +872,7 @@ def filter_segments(
     training_classes: List[str],
     loads_to_use: List[str],
     phases_to_use: List[str],
+    return_mask: bool = False,
 ) -> Tuple[pd.DataFrame, np.ndarray]:
     """
     Filter segment metadata and corresponding segments array based on specified criteria.
@@ -886,6 +899,7 @@ def filter_segments(
         A tuple containing:
         - Filtered DataFrame (sub-set of seg_meta_df)
         - Filtered segments array (rows matching the filtered DataFrame)
+        - Optional boolean mask (if ``return_mask=True``)
     """
     # Build individual masks
     training_mask = seg_meta_df["state"].isin(training_classes)
@@ -898,6 +912,9 @@ def filter_segments(
     # Apply mask
     filtered_meta = seg_meta_df.loc[final_mask].reset_index(drop=True)
     filtered_segments = segments[final_mask]
+
+    if return_mask:
+        return filtered_meta, filtered_segments, final_mask
 
     return filtered_meta, filtered_segments
 

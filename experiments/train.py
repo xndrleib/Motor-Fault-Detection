@@ -67,6 +67,7 @@ from src.models import ResNet, ResidualBlock, CNN
 from src.normalization import Normalizer
 from src.train import train_epoch_cached
 from src.sgda_peak_selection import resolve_peak_location_seed, select_peak_frequencies
+from src.noise_policy import NoisePolicy
 from src.utils import set_all_seeds, load_yaml
 
 
@@ -566,7 +567,19 @@ def main() -> None:
     else:
         indices = np.arange(metadata_df.shape[0])
 
-    segments, seg_meta_df, freqs = preprocessing(
+    train_noise_cfg = inj_cfg.get("train_noise_policy", {}) or {}
+    noise_enabled = bool(train_noise_cfg.get("enabled", False))
+
+    if noise_enabled:
+        logging.info("Training noise policy enabled.")
+        noise_policy = NoisePolicy.from_config(train_noise_cfg)
+        experiment.log_parameter("train_noise_policy_enabled", True)
+        logging.info("Train noise policy: %s", train_noise_cfg)
+    else:
+        noise_policy = None
+        experiment.log_parameter("train_noise_policy_enabled", False)
+
+    prep_out = preprocessing(
         metadata_df=metadata_df.iloc[indices],
         out_dir=base_dir,
         segment_length=inj_cfg["segment_length"],
@@ -575,7 +588,13 @@ def main() -> None:
         cutoff_freq=inj_cfg["cutoff_freq"],
         apply_window=False,
         db=inj_cfg["db"],
+        return_time_segments=noise_enabled,
     )
+    if noise_enabled:
+        segments, seg_meta_df, freqs, time_segments = prep_out
+    else:
+        segments, seg_meta_df, freqs = prep_out
+        time_segments = None
 
     # Data injectors
     freq_resolution = freqs[1] - freqs[0]
@@ -657,9 +676,20 @@ def main() -> None:
     loads_to_use = inj_cfg["loads_to_use"]
     phases_to_use = inj_cfg["phases_to_use"]
 
-    seg_meta_df, segments = filter_segments(
-        seg_meta_df, segments, training_classes, loads_to_use, phases_to_use
-    )
+    if noise_enabled:
+        seg_meta_df, segments, mask = filter_segments(
+            seg_meta_df,
+            segments,
+            training_classes,
+            loads_to_use,
+            phases_to_use,
+            return_mask=True,
+        )
+        time_segments = time_segments[mask] if time_segments is not None else None
+    else:
+        seg_meta_df, segments = filter_segments(
+            seg_meta_df, segments, training_classes, loads_to_use, phases_to_use
+        )
     logging.info(
         f"After filtering → segments: {segments.shape}, Metadata: {seg_meta_df.shape}"
     )
@@ -671,6 +701,8 @@ def main() -> None:
         )
     else:
         indices = np.arange(seg_meta_df.shape[0])
+    if noise_enabled and time_segments is not None:
+        time_segments = time_segments[indices]
 
     # Normalizer
     normalizer = Normalizer(
@@ -687,8 +719,13 @@ def main() -> None:
         "AugmentedPoolDataset": AugmentedPoolDataset,
         "HybridAugFaultDataset": HybridAugFaultDataset,
     }[train_params["dataset_parameters"]["train_dataset_cls"]]
-    train_dataset_kwargs = train_params["dataset_parameters"]["train_dataset_kwargs"]
+    train_dataset_kwargs = dict(train_params["dataset_parameters"]["train_dataset_kwargs"])
     batch_size = train_params["data_parameters"]["batch_size"]
+
+    if noise_enabled and train_dataset_cls is not HybridAugFaultDataset:
+        raise ValueError(
+            "train_noise_policy is only supported with HybridAugFaultDataset."
+        )
 
     if train_dataset_cls is HybridAugFaultDataset:
         if task == "binary":
@@ -703,6 +740,25 @@ def main() -> None:
         )
 
     logging.info(f"Preparing {task} dataset and model.")
+    num_epochs = (
+        train_params["training_parameters"]["num_epochs_binary"]
+        if task == "binary"
+        else train_params["training_parameters"]["num_epochs_multi"]
+    )
+    if noise_enabled:
+        train_dataset_kwargs.update(
+            {
+                "noise_policy": noise_policy,
+                "noise_total_epochs": int(num_epochs),
+                "noise_fft_params": {
+                    "f_sampling": inj_cfg["f_sampling"],
+                    "cutoff_freq": inj_cfg["cutoff_freq"],
+                    "db": inj_cfg["db"],
+                },
+                "noise_rng_seed": train_params.get("seed", 42) + 777,
+            }
+        )
+
     datasets = create_balanced_datasets(
         segments=segments[indices],
         seg_meta_df=seg_meta_df.iloc[indices],
@@ -719,6 +775,7 @@ def main() -> None:
         normalizer=normalizer,
         train_dataset_cls=train_dataset_cls,
         train_dataset_kwargs=train_dataset_kwargs,
+        time_segments=time_segments,
     )
     datasets["normalizer"].save(exp_dir / f"normalizer_{task}.json")
     val_loader = DataLoader(datasets["val"], batch_size=batch_size, shuffle=False)
