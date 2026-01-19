@@ -46,7 +46,7 @@ Each dataset folder also contains an `engine.yml` file describing the motor conf
 
 Model training is performed using the script `experiments/train.py`. Training behavior is controlled through YAML configuration files in `training_configs/`. A configuration specifies the data source, the type of task (binary or multiclass classification) and all preprocessing and model parameters.
 
-Example command for Engine 1 binary classification:
+Example command for Engine 2 binary classification:
 
 ```bash
 cd experiments
