@@ -24,6 +24,7 @@ def main():
     s.add_argument("--orders", type=int, nargs="+", default=[1, 2, 3])
     s.add_argument("--eccentricity-method", choices=["slot-based", "simple"], default="slot-based")
     s.add_argument("--output", required=True)
+    s.add_argument("--normalizer-path", help="Статистики обучающей выборки для дополнительного нормализованного экспорта.")
     p = sub.add_parser("predict")
     p.add_argument("--prepared", required=True)
     p.add_argument("--run", required=True)

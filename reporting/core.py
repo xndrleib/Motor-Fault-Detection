@@ -46,8 +46,11 @@ def write_json(path, data):
 
 
 def load_config(path):
-    with open(path) as f:
-        c = yaml.safe_load(f)
+    try:
+        with open(path) as f:
+            c = yaml.safe_load(f)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Некорректный YAML в {path}: {exc}") from exc
     if not isinstance(c, dict):
         raise ValueError("Конфигурация должна быть YAML-словарём.")
     return c
@@ -81,6 +84,8 @@ def validate_processing(c):
         if not isinstance(v, int) or isinstance(v, bool) or v < 1:
             raise ValueError(f"{key} должен быть положительным целым числом.")
     fs, cutoff = float(p["f_sampling"]), float(p["cutoff_freq"])
+    if fs not in {4098, 10000}:
+        raise ValueError("Поддерживаемые частоты дискретизации: 4098 и 10000 Гц.")
     if not math.isfinite(fs) or fs <= 0 or not 0 < cutoff <= fs / 2:
         raise ValueError("Требуются f_sampling > 0 и 0 < cutoff_freq <= f_sampling/2.")
     if not p.get("fault_types_to_use"):
@@ -217,7 +222,8 @@ def diagnostic_frequencies(engine, fault, orders=(1, 2, 3), eccentricity_method=
 
 
 def synthesize(prepared, engine, fault, output, seed=42, count=10,
-               orders=(1, 2, 3), eccentricity_method="slot-based"):
+               orders=(1, 2, 3), eccentricity_method="slot-based", normalizer_path=None):
+    operation_start = time.perf_counter()
     x, meta, freqs, manifest = load_prepared(prepared)
     if count < 1:
         raise ValueError("count должен быть положительным.")
@@ -261,7 +267,33 @@ def synthesize(prepared, engine, fault, output, seed=42, count=10,
         selected = meta.iloc[source_rows].copy()
         selected["source_row"] = source_rows
         selected["synthetic_fault"] = fault
+        selected["seed"] = seed
+        selected["amplitude_min"] = p["amplitude_range"][0]
+        selected["amplitude_max"] = p["amplitude_range"][1]
+        selected["sigma_min_bins"] = p["sigma_range"][0]
+        selected["sigma_max_bins"] = p["sigma_range"][1]
+        selected["peak_half_width_hz"] = p["peak_segment"]
         selected.to_csv(out / "synthetic_metadata.csv", index=False)
+        if normalizer_path:
+            cfg = load_config(Path(prepared) / "training_config.yaml")
+            norm = Normalizer(cfg["dataset_parameters"]["normalization_method"],
+                              cfg["dataset_parameters"]["normalization_mode"])
+            norm.load(normalizer_path)
+            normalized = norm.transform(generated).astype(np.float32)
+            if not np.isfinite(normalized).all():
+                raise ValueError("Нормализация создала NaN/Inf; проверьте статистики обучающей выборки.")
+            np.save(out / "synthetic_normalized.npy", normalized)
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(8, 3.5))
+        ax.plot(freqs, x[source_rows[0]], label="Normal", linewidth=1)
+        ax.plot(freqs, generated[0], label="SGDA", linewidth=1, alpha=0.85)
+        ax.set(xlabel="Frequency, Hz", ylabel="Spectrum, dB" if p["db"] else "FFT magnitude")
+        ax.legend(); fig.tight_layout()
+        fig.savefig(out / "spectrum.png", dpi=180)
+        fig.savefig(out / "spectrum.pdf")
+        plt.close(fig)
         receipt = {"operation": "synthesize", "seed": seed, "fault": fault, "count": count,
                    "orders": list(orders), "eccentricity_method": eccentricity_method,
                    "diagnostic_frequencies_hz": fault_freqs, "half_window_bins": half_bins,
@@ -269,6 +301,9 @@ def synthesize(prepared, engine, fault, output, seed=42, count=10,
                    "milliseconds_per_segment": elapsed * 1000 / count,
                    "window_seconds": manifest["window_seconds"], "runtime": runtime(),
                    "engine_sha256": sha256(engine),
+                   "normalizer_sha256": sha256(normalizer_path) if normalizer_path else None,
+                   "normalization": "additional synthetic_normalized.npy with provided training statistics" if normalizer_path else "raw FFT representation; no fitted normalizer supplied",
+                   "generation_and_export_seconds": time.perf_counter() - operation_start,
                    "prepared_manifest_sha256": sha256(Path(prepared) / "manifest.json"),
                    "array_sha256": sha256(out / "synthetic_segments.npy")}
         write_json(out / "manifest.json", receipt)
@@ -341,6 +376,8 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
     if normalizer.mode == "global":
         normalizer.load(norm_path)
     data = normalizer.transform(np.asarray(x[idx]))
+    if not np.isfinite(data).all():
+        raise ValueError("Нормализация создала NaN/Inf; проверьте статистики обучающей выборки.")
     checkpoint = root / "checkpoints" / f"best_{task}.pth"
     model = build_model(c, len(classes), root)
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
@@ -365,6 +402,8 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
     sync()
     elapsed = time.perf_counter() - start
     logits = np.concatenate(outputs)
+    if not np.isfinite(logits).all():
+        raise ValueError("Модель вернула NaN/Inf; диагностический результат не сформирован.")
     preds = logits.argmax(axis=1)
     labels = list(range(len(classes)))
     result = {"operation": "predict", "task": task, "classes": classes,

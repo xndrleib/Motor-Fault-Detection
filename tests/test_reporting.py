@@ -91,8 +91,55 @@ def test_offline_logging_writes_locally_without_credentials(tmp_path):
     assert [r["event"] for r in records] == ["parameter","metric","end"]
 
 
-@pytest.mark.parametrize("field,value", [("shift",0),("segment_length",-1),("cutoff_freq",3000)])
+@pytest.mark.parametrize("field,value", [("shift",0),("segment_length",-1),("cutoff_freq",3000),("f_sampling",8000)])
 def test_invalid_fft_configuration_rejected(field,value):
     p={"shift":20,"segment_length":10000,"f_sampling":4098,"cutoff_freq":250,"fault_types_to_use":["rotor bar defect"]}
     with pytest.raises(ValueError):
         validate_processing({"processing_parameters":{**p,field:value}})
+
+
+def test_malformed_yaml_has_file_context(tmp_path):
+    from reporting.core import load_config
+    p=tmp_path/"bad.yaml"
+    p.write_text("broken: [1,")
+    with pytest.raises(ValueError,match="bad.yaml"):
+        load_config(p)
+
+
+def test_new_file_formats_and_current_checkpoint_agree(tmp_path):
+    import torch
+    import yaml
+    from src.models import CNN
+    from reporting.diagnose import diagnose
+    run=tmp_path/"run";(run/"checkpoints").mkdir(parents=True)
+    cfg={"task":"binary","model":"CNN","model_parameters":{"dropout":0.2,"attention_module":False},
+         "dataset_parameters":{"normalization_method":"min-max","normalization_mode":"global"},
+         "processing_parameters":{"segment_length":10000,"shift":20,"f_sampling":4098,"cutoff_freq":250,
+                                  "db":True,"fault_types_to_use":["inter-turn short circuits","rotor bar defect"]}}
+    (run/"training_config.yaml").write_text(yaml.safe_dump(cfg))
+    (run/"normalizer_binary.json").write_text('{"min": -40, "max": 80}')
+    torch.manual_seed(42)
+    model=CNN(num_classes=2,dropout_rate=0.2)
+    torch.save({"state_dict":model.state_dict()},run/"checkpoints/best_binary.pth")
+    time_values=np.arange(10000)/4098
+    current=np.sin(2*np.pi*50*time_values)
+    ordinary=tmp_path/"ordinary.csv"
+    pd.DataFrame({"Time":time_values,"Current":current}).to_csv(ordinary,index=False)
+    three=tmp_path/"three.csv"
+    pd.DataFrame({"Time":time_values,"I1":2*current,"I2":current,"I3":-current}).to_csv(three,index=False)
+    ascii_path=tmp_path/"ascii.txt"
+    np.savetxt(ascii_path,np.column_stack([time_values,current]),delimiter=";")
+    results=[]
+    for i,(path,phase) in enumerate([(ordinary,1),(three,2),(ascii_path,1)]):
+        result=diagnose(path,run,tmp_path/f"out-{i}",phase=phase)
+        assert result["segments"] == 1
+        assert result["metrics"] is None
+        results.append(result["prediction"])
+    assert len(set(results)) == 1
+    np.savetxt(ascii_path,np.column_stack([time_values[::-1],current]),delimiter=";")
+    with pytest.raises(ValueError,match="возрастать"):
+        diagnose(ascii_path,run,tmp_path/"bad-time")
+    (run/"normalizer_binary.json").write_text('{"min": NaN, "max": 80}')
+    with pytest.raises(ValueError,match="Нормализация"):
+        diagnose(ordinary,run,tmp_path/"bad-normalizer")
+    assert not (tmp_path/"bad-normalizer").exists()

@@ -139,7 +139,7 @@ def load_configurations() -> dict:
 
 def start_experiment(
     config: dict, online: bool = True, name: str | None = None, local_dir: Path | None = None
-) -> Tuple[comet_ml.CometExperiment, str]:
+) -> Tuple[object, str]:
     """Start a Comet ML experiment and log source code.
 
     Parameters
