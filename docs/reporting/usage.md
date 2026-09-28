@@ -32,7 +32,7 @@ macOS CPU-профиль закреплён отдельно. Linux-профил
 - prepare: raw metadata/config → segments.npy, freqs.npy, metadata, hash manifest.
 - synthesize: подготовленные нормальные спектры + engine config → синтетические массивы, metadata, PNG/PDF. При --normalizer-path сохраняется также synthetic_normalized.npy; статистики не оцениваются на test.
 - predict: точный saved run → сегментные метрики, голосование по записи и сравнение со старыми предсказаниями.
-- python -m reporting.diagnose: новый неразмеченный CSV/ASCII → сегментные классы и общее решение. Без истинных меток нет выдуманной Accuracy.
+- python -m reporting.diagnose: новый неразмеченный CSV/ASCII → сегментные классы и общее решение. Метрики качества рассчитываются только для размеченного набора.
 - python -m experiments.train --offline: полный исходный алгоритм обучения с локальными журналами. --dataset-dir и --prepared-dir отделяют входы от выходов.
 
 Новые CSV могут иметь Time,Current либо Time,I1,I2,I3; --phase выбирает канал. Для синтеза остальных групп используется тот же API. Пример эксцентриситета без неизвестного R_s:

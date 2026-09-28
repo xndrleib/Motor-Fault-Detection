@@ -129,11 +129,12 @@ def preprocessing(
     for m_id, meta in tqdm(
         metadata_df.iterrows(), total=len(metadata_df), desc="pre-processing"
     ):
-        if meta["file_path"].split(".")[-1] == "csv":
+        suffix = Path(meta["file_path"]).suffix.lower()
+        if suffix == ".csv":
             # 1) Load the CSV
             df = load_measurement(m_id, metadata_df)
             current = df["Current"].dropna().values
-        elif meta["file_path"].split(".")[-1] == "txt":
+        elif suffix == ".txt":
             df = read_oscilloscope_data(meta["file_path"])
             current = df["Data"].dropna().values
 

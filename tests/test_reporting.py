@@ -143,3 +143,26 @@ def test_new_file_formats_and_current_checkpoint_agree(tmp_path):
     with pytest.raises(ValueError,match="Нормализация"):
         diagnose(ordinary,run,tmp_path/"bad-normalizer")
     assert not (tmp_path/"bad-normalizer").exists()
+
+
+@pytest.mark.parametrize("suffix",[".CSV",".TXT"])
+def test_prepare_accepts_declared_formats_case_insensitively(tmp_path,suffix):
+    import yaml
+    from reporting.core import prepare
+    current=np.sin(np.arange(10000)/13)
+    time_values=np.arange(10000)/4098
+    path=tmp_path/("input"+suffix)
+    if suffix==".CSV":
+        pd.DataFrame({"Time":time_values,"Current":current}).to_csv(path)
+    else:
+        np.savetxt(path,np.column_stack([time_values,current]),delimiter=";")
+    meta=tmp_path/"metadata.csv"
+    pd.DataFrame([{"measurement_id":"test","base_id":"test","state":"normal","phase":1,
+                   "load_condition":100,"experiment":"test","file_path":str(path)}]).to_csv(meta,index=False)
+    config=tmp_path/"config.yaml"
+    config.write_text(yaml.safe_dump({"processing_parameters":{
+        "segment_length":10000,"shift":20,"f_sampling":4098,"cutoff_freq":250,
+        "db":True,"fault_types_to_use":["rotor bar defect"],"phases_to_use":[1],"loads_to_use":[100]}}))
+    receipt=prepare(meta,config,tmp_path/"prepared",tmp_path)
+    assert receipt["shape"]==[1,611]
+    assert np.isfinite(np.load(tmp_path/"prepared/segments.npy")).all()
