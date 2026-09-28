@@ -28,6 +28,8 @@ Notes
   logits/probabilities/embeddings.
 - Embeddings come from ``model.forward_features`` if implemented.
 """
+from __future__ import annotations
+
 import argparse
 import datetime
 import logging
@@ -37,7 +39,6 @@ import time
 from pathlib import Path
 from typing import Tuple
 
-import comet_ml  # import comet_ml before the following modules: torch.
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -74,6 +75,7 @@ from src.sgda_peak_selection import (
 )
 from src.noise_policy import NoisePolicy
 from src.utils import set_all_seeds, load_yaml
+from src.experiment_logging import LocalExperiment
 
 
 # ---- Paths & logging ---------------------------------------------------------
@@ -136,7 +138,7 @@ def load_configurations() -> dict:
 
 
 def start_experiment(
-    config: dict, online: bool = True, name: str | None = None
+    config: dict, online: bool = True, name: str | None = None, local_dir: Path | None = None
 ) -> Tuple[comet_ml.CometExperiment, str]:
     """Start a Comet ML experiment and log source code.
 
@@ -154,6 +156,9 @@ def start_experiment(
     (Experiment, str)
         The Comet experiment handle and the timestamped run name.
     """
+    if not online:
+        return LocalExperiment(Path(local_dir) / "experiment.jsonl"), name or "offline"
+    import comet_ml
     experiment = comet_ml.start(
         api_key=config["API_KEY"],
         project_name=config["PROJECT_NAME"],
@@ -172,6 +177,7 @@ def prepare_directories(
     runs_dir: str | Path | None = None,
     exp_name: str | None = None,
     run_name: str | None = None,
+    dataset_dir: str | Path | None = None,
 ):
     """Create output directories for experiment artifacts.
 
@@ -190,10 +196,10 @@ def prepare_directories(
 
     exp_root = runs_root / exp_name if exp_name else runs_root
     exp_dir = exp_root / run_name
-    exp_dir.mkdir(parents=True, exist_ok=True)
+    exp_dir.mkdir(parents=True, exist_ok=False)
 
     # dataset base (under repo root)
-    base_dir = repo / "dataset" / engine.replace("-", "_")
+    base_dir = Path(dataset_dir).resolve() if dataset_dir else repo / "dataset" / engine.replace("-", "_")
 
     # standard subfolders
     indices_dir = exp_dir / "indices"
@@ -470,13 +476,21 @@ def main() -> None:
         default=None,
         help="Override runs root directory. Default is <repo_root>/res/runs.",
     )
+    parser.add_argument("--offline", action="store_true", help="Local logs only; no Comet configuration or network.")
+    parser.add_argument("--dataset-dir", type=str, help="Directory containing engine.yml and metadata.csv.")
+    parser.add_argument("--path-base", type=str, help="Base for relative metadata file_path values.")
+    parser.add_argument("--prepared-dir", type=str, help="Verified output of reporting.cli prepare.")
+    parser.add_argument("--device", choices=["cpu", "mps", "cuda"], help="Explicit execution device.")
     args = parser.parse_args()
 
     # Load training configuration
     train_params = load_yaml(args.cfg)
     engine = train_params.get("engineLabel", None)
     task_from_cfg = train_params.get("task", None)
-    task = task_from_cfg if task_from_cfg else args.task
+    task = args.task or task_from_cfg
+    if args.offline:
+        train_params["comet_online"] = False
+    train_params["task"] = task
     if not task:
         raise RuntimeError(
             "Task must be specified in training configuration (task: binary|multiclass) or via --task CLI argument."
@@ -489,9 +503,11 @@ def main() -> None:
 
     # Prepare directories & logger
     base_dir, exp_dir, indices_dir, checkpoints_dir, fig_dir, log_dir = prepare_directories(
-        engine=engine, runs_dir=args.runs_dir, exp_name=args.exp_name, run_name=run_name
+        engine=engine, runs_dir=args.runs_dir, exp_name=args.exp_name, run_name=run_name,
+        dataset_dir=args.dataset_dir,
     )
     save_configs(args.cfg, base_dir / "engine.yml", exp_dir)
+    (exp_dir / "training_config.yaml").write_text(yaml.safe_dump(train_params, sort_keys=False))
     setup_logger(str(log_dir))
     logging.info(
         f"Starting Training/Evaluation Script for engine '{engine}', task '{task}'"
@@ -500,14 +516,15 @@ def main() -> None:
     logging.info(f"Experiment: {args.exp_name or '(none)'} | Run: {run_name}")
 
     # Start Comet and set seeds/device
-    config = load_configurations()
+    online = train_params.get("comet_online", True)
+    config = load_configurations() if online else {}
     comet_name = f"{args.exp_name}/{run_name}" if args.exp_name else run_name
     experiment, _ = start_experiment(
-        config, train_params.get("comet_online", True), name=comet_name
+        config, online, name=comet_name, local_dir=exp_dir
     )
 
     set_all_seeds(train_params.get("seed", 42))
-    device_str = (
+    device_str = args.device or (
         "cuda"
         if torch.cuda.is_available()
         else (
@@ -531,6 +548,8 @@ def main() -> None:
     engine_config = load_yaml(base_dir / "engine.yml")
     experiment.log_parameters(engine_config)
     metadata_df = pd.read_csv(base_dir / "metadata.csv").set_index("measurement_id")
+    path_base = Path(args.path_base).resolve() if args.path_base else _repo_root() / "experiments"
+    metadata_df["file_path"] = [str((path_base / str(p)).resolve()) for p in metadata_df["file_path"]]
     experiment.log_parameters(
         {"num_of_measurements": metadata_df["state"].value_counts().to_dict()}
     )
@@ -584,9 +603,19 @@ def main() -> None:
         noise_policy = None
         experiment.log_parameter("train_noise_policy_enabled", False)
 
-    prep_out = preprocessing(
+    if args.prepared_dir:
+        from reporting.core import load_prepared
+        if noise_enabled:
+            raise ValueError("Prepared spectra do not contain time windows for the noise policy.")
+        prepared_x, prepared_meta, prepared_freqs, prepared_manifest = load_prepared(args.prepared_dir)
+        if prepared_manifest["processing_parameters"] != inj_cfg:
+            raise ValueError("Prepared processing parameters differ from the training config.")
+        prep_out = (prepared_x, prepared_meta, prepared_freqs)
+        shutil.copy2(Path(args.prepared_dir) / "manifest.json", exp_dir / "prepared_manifest.json")
+    else:
+        prep_out = preprocessing(
         metadata_df=metadata_df.iloc[indices],
-        out_dir=base_dir,
+        out_dir=exp_dir / "preprocessed",
         segment_length=inj_cfg["segment_length"],
         step=inj_cfg["shift"],
         f_sampling=inj_cfg["f_sampling"],

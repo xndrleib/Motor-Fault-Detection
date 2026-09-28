@@ -76,13 +76,15 @@ def get_eccentricity_freqs(
     """
     f1 = Decimal(str(engine_config["f1"]))
     f_r = Decimal(str(engine_config["f_r"]))
-    R_s = Decimal(str(engine_config["R_s"]))
-    p = Decimal(str(engine_config["p"]))
-
-    if p == 0:
-        raise ValueError(
-            "Number of pole pairs p must not be zero to avoid division by zero."
-        )
+    if method not in {"slot-based", "simple"}:
+        raise ValueError("method must be 'slot-based' or 'simple'.")
+    if method == "slot-based":
+        R_s = Decimal(str(engine_config["R_s"]))
+        p = Decimal(str(engine_config["p"]))
+        if p == 0:
+            raise ValueError(
+                "Number of pole pairs p must not be zero to avoid division by zero."
+            )
 
     freqs = []
     for n in n_range:

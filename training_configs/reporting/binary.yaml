@@ -1,0 +1,52 @@
+comet_online: false
+data_parameters:
+  batch_size: 4096
+dataset_parameters:
+  normalization_method: min-max
+  normalization_mode: global
+  real_fault_train: 0
+  test_size: 0.3
+  train_dataset_cls: HybridAugFaultDataset
+  train_dataset_kwargs:
+    K: 2
+    R: 1
+    cache: true
+    keep_orig: true
+  val_size: 0.2
+engineLabel: engine_2
+model: ResNet
+model_parameters:
+  attention_module: false
+  dropout: 0.2
+processing_parameters:
+  amplitude_range:
+  - 0.5
+  - 20.0
+  cutoff_freq: 250
+  db: true
+  f_sampling: 4098
+  fault_types_to_use:
+  - inter-turn short circuits
+  - rotor bar defect
+  include_negative_peaks: true
+  loads_to_use:
+  - 100
+  noise_factor: 0.0
+  peak_segment: 4
+  peak_type: gaussian
+  phases_to_use:
+  - 1
+  random_peak_position: true
+  segment_length: 10000
+  shift: 20
+  sigma_range:
+  - 0.5
+  - 1.5
+seed: 42
+task: binary
+test_run: false
+training_parameters:
+  initial_lr: 0.001
+  num_epochs_binary: 30
+  num_epochs_multi: 30
+  patience: 30

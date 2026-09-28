@@ -1,0 +1,4 @@
+# Optional online Comet logging. Offline mode requires no credentials.
+API_KEY: null
+PROJECT_NAME: null
+WORKSPACE: null
