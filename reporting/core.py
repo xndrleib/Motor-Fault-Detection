@@ -194,7 +194,11 @@ def load_prepared(path):
 
 
 def diagnostic_frequencies(engine, fault, orders=(1, 2, 3), eccentricity_method="slot-based"):
+    if not isinstance(engine, dict):
+        raise ValueError("Конфигурация двигателя должна быть словарём.")
     c = engine.get("mcsa", engine)
+    if not isinstance(c, dict):
+        raise ValueError("Раздел mcsa должен содержать параметры двигателя в виде словаря.")
     required = {"rotor bar defect": ["f1", "s"], "inter-turn short circuits": ["f1", "f_r"],
                 "bearing defect": ["f_r", "n", "D_pit", "D_ball", "beta"],
                 "air-gap eccentricity": ["f1", "f_r"],
@@ -326,6 +330,24 @@ def classification_metrics(y, pred, labels):
     return result
 
 
+def decode_prediction_labels(values, classes):
+    """Read both numeric and textual labels used by historical CSV exports."""
+    mapping = {name: index for index, name in enumerate(classes)}
+    codes = []
+    for value in values:
+        if isinstance(value, str) and value in mapping:
+            codes.append(mapping[value])
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Неизвестная сохранённая метка: {value}") from exc
+        if not math.isfinite(number) or number != int(number) or not 0 <= number < len(classes):
+            raise ValueError(f"Неизвестная сохранённая метка: {value}")
+        codes.append(int(number))
+    return np.asarray(codes, dtype=np.int64)
+
+
 def build_model(config, num_classes, run):
     mp = config["model_parameters"]
     prior = None
@@ -419,7 +441,7 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
     for load, group in test_meta.groupby("load_condition"):
         result["by_load"][str(load)] = classification_metrics(group.true_label, group.prediction, labels)
     if old is not None:
-        reference = old[f"{task}_prediction"].to_numpy()
+        reference = decode_prediction_labels(old[f"{task}_prediction"], classes)
         result["historical_prediction_agreement"] = float(np.mean(reference == preds))
         result["historical_prediction_sha256"] = sha256(pred_path)
     records = []

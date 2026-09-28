@@ -15,6 +15,16 @@ ENGINE = {"f1":50, "f_r":20, "s":0.05, "n":8, "D_pit":40,
           "D_ball":10, "beta":0, "p":2, "R_s":None}
 
 
+def test_legacy_prediction_labels_have_one_semantic_mapping():
+    from reporting.core import decode_prediction_labels
+    classes=["inter-turn short circuits","normal","rotor bar defect"]
+    assert decode_prediction_labels(["normal","rotor bar defect","inter-turn short circuits"],classes).tolist()==[1,2,0]
+    assert decode_prediction_labels([1,"2",0.0],classes).tolist()==[1,2,0]
+    for invalid in ["unknown",3,0.5,float("nan")]:
+        with pytest.raises(ValueError,match="метка"):
+            decode_prediction_labels([invalid],classes)
+
+
 @pytest.mark.parametrize("fault,expected", [
     ("rotor bar defect", [35,40,45,55,60,65]),
     ("inter-turn short circuits", [30,50,70,130,150,170]),
@@ -31,6 +41,11 @@ def test_simple_eccentricity_does_not_require_slot_geometry():
         diagnostic_frequencies(ENGINE, "air-gap eccentricity", [1], "slot-based")
     with pytest.raises(ValueError, match="method"):
         get_eccentricity_freqs(ENGINE, [1], method="typo")
+
+
+def test_empty_engine_section_is_a_controlled_input_error():
+    with pytest.raises(ValueError,match="mcsa"):
+        diagnostic_frequencies({"mcsa":None},"rotor bar defect")
 
 
 @pytest.mark.parametrize("key,value", [("f1",float("nan")),("f1",-1),("s",1)])
