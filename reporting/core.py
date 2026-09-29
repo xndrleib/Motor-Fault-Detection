@@ -229,7 +229,8 @@ def diagnostic_frequencies(engine, fault, orders=(1, 2, 3), eccentricity_method=
 
 
 def synthesize(prepared, engine, fault, output, seed=42, count=10,
-               orders=(1, 2, 3), eccentricity_method="slot-based", normalizer_path=None):
+               orders=(1, 2, 3), eccentricity_method="slot-based", normalizer_path=None,
+               peak_position="diagnostic"):
     operation_start = time.perf_counter()
     x, meta, freqs, manifest = load_prepared(prepared)
     if count < 1:
@@ -245,16 +246,23 @@ def synthesize(prepared, engine, fault, output, seed=42, count=10,
         raise ValueError("В подготовленных данных нет нормальных записей.")
     source_rows = np.resize(normal, count)
     half_bins = int(np.ceil(p["peak_segment"] / (freqs[1] - freqs[0])))
-    injector = CompositeAnomalyInjector({
-        "peak": GaussianPeakInjector(peak_segment=half_bins,
-                amplitude_range=tuple(p["amplitude_range"]), sigma_range=tuple(p["sigma_range"]),
-                negative=p["include_negative_peaks"], random_peak_position=p["random_peak_position"]),
-        "noise": NoiseInjector(p["noise_factor"])})
+    if peak_position not in {"diagnostic", "configured"}:
+        raise ValueError("peak_position: expected diagnostic or configured")
     if p["peak_segment"] <= 0 or p["sigma_range"][0] <= 0 or p["noise_factor"] < 0:
         raise ValueError("Некорректные параметры инжектора.")
     for k in ("amplitude_range", "sigma_range"):
         if len(p[k]) != 2 or not all(math.isfinite(v) for v in p[k]) or p[k][0] > p[k][1]:
             raise ValueError(f"Некорректный диапазон {k}.")
+    if peak_position == "diagnostic":
+        from src.anomaly_injector import DiagnosticGaussianPeakInjector
+        peak = DiagnosticGaussianPeakInjector(
+            half_width_hz=p["peak_segment"], amplitude_range=tuple(p["amplitude_range"]),
+            sigma_range=tuple(p["sigma_range"]), negative=p["include_negative_peaks"])
+    else:
+        peak = GaussianPeakInjector(peak_segment=half_bins,
+            amplitude_range=tuple(p["amplitude_range"]), sigma_range=tuple(p["sigma_range"]),
+            negative=p["include_negative_peaks"], random_peak_position=p["random_peak_position"])
+    injector = CompositeAnomalyInjector({"peak": peak, "noise": NoiseInjector(p["noise_factor"])})
     py_state, np_state = random.getstate(), np.random.get_state()
     try:
         random.seed(seed)
@@ -280,6 +288,7 @@ def synthesize(prepared, engine, fault, output, seed=42, count=10,
         selected["sigma_min_bins"] = p["sigma_range"][0]
         selected["sigma_max_bins"] = p["sigma_range"][1]
         selected["peak_half_width_hz"] = p["peak_segment"]
+        selected["peak_position"] = peak_position
         selected.to_csv(out / "synthetic_metadata.csv", index=False)
         if normalizer_path:
             cfg = load_config(Path(prepared) / "training_config.yaml")
@@ -302,6 +311,9 @@ def synthesize(prepared, engine, fault, output, seed=42, count=10,
         fig.savefig(out / "spectrum.pdf")
         plt.close(fig)
         receipt = {"operation": "synthesize", "seed": seed, "fault": fault, "count": count,
+                   "peak_position": peak_position,
+                   "peak_half_width_hz": p["peak_segment"],
+                   "center_definition": "continuous Gaussian centre in Hz" if peak_position == "diagnostic" else "configured FFT-window position",
                    "orders": list(orders), "eccentricity_method": eccentricity_method,
                    "diagnostic_frequencies_hz": fault_freqs, "half_window_bins": half_bins,
                    "shape": list(generated.shape), "synthesis_seconds": elapsed,

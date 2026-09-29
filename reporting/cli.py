@@ -24,6 +24,8 @@ def main():
     s.add_argument("--fault", required=True)
     s.add_argument("--seed", type=int, default=42)
     s.add_argument("--count", type=int, default=10)
+    s.add_argument("--peak-position", choices=["diagnostic", "configured"], default="diagnostic",
+                   help="diagnostic: центр гауссовой компоненты в расчётной частоте; configured: позиция из конфигурации.")
     s.add_argument("--orders", type=int, nargs="+", default=[1, 2, 3])
     s.add_argument("--eccentricity-method", choices=["slot-based", "simple"], default="slot-based")
     s.add_argument("--output", required=True)

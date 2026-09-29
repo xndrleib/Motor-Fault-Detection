@@ -1,6 +1,6 @@
 # SGDA MotorDiag reporting release
 
-Version 0.1.2. This branch packages the existing SGDA implementation for reproducible
+Version 0.1.3. This branch packages the SGDA implementation for reproducible
 preparation, synthesis and inference. The evaluated benchmark uses Engine 2,
 phase 1, load 100%, and Normal / ITSC / RBD.
 
@@ -41,7 +41,12 @@ use seconds by default; declare --time-axis milliseconds when appropriate.
 ## Commands and outputs
 
 - prepare validates input formats and time coordinates, then invokes the existing FFT pipeline.
-- synthesize exports SGDA spectra, configuration metadata and plots.
+- synthesize exports SGDA spectra, configuration metadata and plots. Its
+  default `--peak-position diagnostic` samples Gaussian components with centres
+  at the calculated diagnostic frequencies and support within the configured
+  half-width in Hz. The centre is a continuous frequency, not the largest FFT
+  bin. `--peak-position configured` applies the position parameters from the
+  supplied training configuration. The selected setting is recorded in outputs.
 - predict restores an existing test split and exports metrics, segment scores and majority votes.
 - python -m reporting.diagnose classifies a new unlabelled current file.
 - python -m experiments.train --offline runs the existing training workflow.

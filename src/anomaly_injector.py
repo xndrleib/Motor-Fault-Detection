@@ -81,6 +81,56 @@ class GaussianPeakInjector(BaseAnomalyInjector):
         return modified_segment
 
 
+class DiagnosticGaussianPeakInjector(BaseAnomalyInjector):
+    """Sample a Gaussian centred at each diagnostic frequency on the input grid.
+
+    The centre is continuous in Hz. Widths retain the configuration's FFT-bin
+    units; the support is restricted to the requested half-width in Hz.
+    """
+
+    def __init__(self, half_width_hz=4.0, amplitude_range=(0.5, 20.0),
+                 sigma_range=(0.5, 1.5), negative=False):
+        if not np.isfinite(half_width_hz) or half_width_hz <= 0:
+            raise ValueError("half_width_hz must be finite and positive")
+        for name, values in (("amplitude_range", amplitude_range),
+                             ("sigma_range", sigma_range)):
+            if (len(values) != 2 or not np.isfinite(values).all()
+                    or values[0] <= 0 or values[0] > values[1]):
+                raise ValueError(f"Invalid {name}")
+        self.half_width_hz = half_width_hz
+        self.amplitude_range = amplitude_range
+        self.sigma_range = sigma_range
+        self.negative = negative
+
+    def inject(self, segment, fft_freqs, fault_freqs):
+        segment = np.asarray(segment)
+        freqs = np.asarray(fft_freqs, dtype=float)
+        if (segment.ndim != 1 or segment.shape != freqs.shape or len(freqs) < 2
+                or not np.issubdtype(segment.dtype, np.floating)
+                or not np.isfinite(segment).all() or not np.isfinite(freqs).all()):
+            raise ValueError("Expected matching finite floating-point spectrum and grid")
+        steps = np.diff(freqs)
+        if np.any(steps <= 0) or not np.allclose(steps, steps[0], rtol=1e-8, atol=1e-12):
+            raise ValueError("Expected a strictly increasing uniform frequency grid")
+        frequencies = fault_freqs(freqs) if callable(fault_freqs) else fault_freqs
+        frequencies = np.asarray(frequencies, dtype=float)
+        if (frequencies.ndim != 1 or not np.isfinite(frequencies).all()
+                or np.any(frequencies < freqs[0]) or np.any(frequencies > freqs[-1])):
+            raise ValueError("Diagnostic frequency lies outside the represented range")
+        result = segment.copy()
+        for frequency in frequencies:
+            support = np.abs(freqs - frequency) <= self.half_width_hz
+            if not support.any():
+                raise ValueError("Peak support contains no frequency samples")
+            amplitude = random.uniform(*self.amplitude_range)
+            sigma_hz = random.uniform(*self.sigma_range) * steps[0]
+            if self.negative:
+                amplitude *= random.choice([-1, 1])
+            profile = amplitude * np.exp(-0.5 * ((freqs[support] - frequency) / sigma_hz) ** 2)
+            result[support] += profile
+        return result
+
+
 class NoiseInjector(BaseAnomalyInjector):
     def __init__(self, noise_factor=0.05):
         self.noise_factor = noise_factor

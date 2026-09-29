@@ -5,7 +5,7 @@ from pathlib import Path
 import random
 import numpy as np
 from reporting.core import load_prepared, synthesize, write_json, sha256, runtime
-from src.anomaly_injector import GaussianPeakInjector
+from src.anomaly_injector import DiagnosticGaussianPeakInjector
 
 
 def main():
@@ -42,22 +42,42 @@ def main():
             "frequencies":r1["diagnostic_frequencies_hz"]})
     performance=synthesize(a.prepared,a.engine,"inter-turn short circuits",out/"performance-10000",
                            seed=42,count=10000)
-    # Isolate one injected peak from the real signal background for measurement.
-    half=int(np.ceil(4/(freqs[1]-freqs[0])))
-    generator=GaussianPeakInjector(half,(10,10),(1,1),negative=False,random_peak_position=True)
-    deviations=[]
+    # Recover each component's continuous centre from its actual sampled change.
+    # Log-magnitude quadratic fitting is independent of the generating formula.
+    generator=DiagnosticGaussianPeakInjector(4,(0.5,20),(0.5,1.5),negative=True)
+    deviations=[]; measured=[]
+    targets=sorted({float(f) for row in checks for f in row["frequencies"]}
+                   | {float(freqs[0]), float(freqs[-1])})
+    normal_rows=np.flatnonzero(meta.state.eq("normal"))
     random.seed(42)
-    for _ in range(100):
-        delta=generator.inject(np.zeros(len(freqs)),freqs,[50.0])
-        deviations.append(abs(float(freqs[np.argmax(delta)])-50.0))
+    for target in targets:
+        for trial in range(100):
+            source=np.asarray(x[normal_rows[trial % len(normal_rows)]])
+            result=generator.inject(source,freqs,[target])
+            delta=result.astype(float)-source.astype(float)
+            indices=np.argsort(np.abs(delta))[-3:]
+            if np.any(np.abs(delta[indices]) == 0):
+                raise ValueError("Insufficient nonzero samples to measure a centre")
+            origin=freqs[np.argmax(np.abs(delta))]
+            qa,qb,_=np.polyfit(freqs[indices]-origin,np.log(np.abs(delta[indices])),2)
+            if qa >= 0:
+                raise ValueError("Measured component is not a Gaussian peak")
+            center=float(origin-qb/(2*qa))
+            deviations.append(abs(center-target))
+            measured.append({"frequency_hz":target,"trial":trial,"fitted_center_hz":center,
+                             "error_hz":abs(center-target)})
     report={"runtime":runtime(),"prepared_manifest_sha256":sha256(Path(a.prepared)/"manifest.json"),
             "functional_checks":checks,"performance_10000":performance,
-            "peak_localization":{"repetitions":100,"frequency_hz":50,"peak_segment_half_width_hz":4,
-                "interpretation":"1% of full 8 Hz injection band; comparison requires owner confirmation",
+            "peak_localization":{"repetitions_per_frequency":100,"frequencies_hz":targets,
+                "total_measurements":len(measured),"peak_segment_half_width_hz":4,
+                "peak_position":"diagnostic",
+                "center_definition":"continuous Gaussian centre reconstructed from the log absolute added component",
+                "interpretation":"1% of the configured full 8 Hz support band",
+                "input":"actual float32 normal spectra; each component measured separately; noise disabled",
                 "tolerance_hz":0.08,"maximum_deviation_hz":max(deviations),
                 "within_tolerance":sum(d<=0.08 for d in deviations),
                 "verdict_under_stated_interpretation": "pass" if max(deviations)<=0.08 else "fail",
-                "algorithm_changed":False}}
+                "measurements":measured}}
     write_json(out/"functional-report.json",report)
     print(json.dumps(report,ensure_ascii=False,indent=2))
 
