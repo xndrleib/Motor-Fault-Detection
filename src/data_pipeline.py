@@ -64,6 +64,7 @@ def preprocessing(
     apply_window: bool = False,
     db: bool = True,
     return_time_segments: bool = False,
+    measurement_loader=None,
 ) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray]:
     """
     Convert every measurement in *metadata_df* into FFT magnitude windows.
@@ -98,6 +99,11 @@ def preprocessing(
     db : bool, optional
         If *True*, returns magnitude in decibels.  Default = *True*.
 
+    measurement_loader : callable, optional
+        Validated file adapter returning a DataFrame with a Current column.
+        Its index retains the metadata coordinate of the original file adapter.
+        Omission preserves the historical CSV/ASCII loading path.
+
     Returns
     -------
     segments : np.ndarray
@@ -130,7 +136,10 @@ def preprocessing(
         metadata_df.iterrows(), total=len(metadata_df), desc="pre-processing"
     ):
         suffix = Path(meta["file_path"]).suffix.lower()
-        if suffix == ".csv":
+        if measurement_loader is not None:
+            df = measurement_loader(m_id, meta)
+            current = df["Current"].dropna().values
+        elif suffix == ".csv":
             # 1) Load the CSV
             df = load_measurement(m_id, metadata_df)
             current = df["Current"].dropna().values

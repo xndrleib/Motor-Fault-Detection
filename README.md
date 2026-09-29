@@ -1,67 +1,66 @@
-# Motor Fault Detection
+# SGDA MotorDiag reporting release
 
-## Reporting release 0.1.1
-
-For the reporting branch, start with [the offline usage guide](docs/reporting/usage.md).
-It covers preparation, synthetic export, saved-model evaluation and diagnosis of a new current file.
-The [requirements matrix](docs/reporting/requirements-matrix.md) distinguishes verified behavior from pending acceptance criteria.
-Diagnostic quality is evaluated on Normal / ITSC / RBD; other fault groups have separate synthesis examples.
-
-This repository contains a complete workflow for detecting electric motor faults from time-series data. Two datasets with different motor configurations are provided along with training scripts, utility modules and Jupyter notebooks for exploration.
-
-[GDrive with materials](https://drive.google.com/drive/folders/1SMSMG9CCAJl3eiVVAotnXFL-lBQ_Um4p?usp=sharing)
-
-## Repository Layout
-
-```
-├── dataset/              # Raw measurements and metadata
-│   ├── engine_1/         # First motor dataset (see `dataset/engine_1/README.md`)
-│   └── engine_2/         # Second motor dataset (see `dataset/engine_2/README.md`)
-├── docs/                 # Additional documentation and notes
-├── experiments/          # Training and analysis scripts
-├── notebooks/            # Step‑by‑step exploratory notebooks
-├── src/                  # Library code (dataset prep, models, training utils)
-├── training_configs/     # YAML files describing training parameters
-└── res/                  # Output directory for experiment results
-```
+Version 0.1.2. This branch packages the existing SGDA implementation for reproducible
+preparation, synthesis and inference. The evaluated benchmark uses Engine 2,
+phase 1, load 100%, and Normal / ITSC / RBD.
 
 ## Installation
 
-A Conda environment definition is provided. The included `setup.sh` script creates and activates the environment automatically:
+Use Python 3.11 and the dependency profile for the target environment:
 
-```bash
-conda env create -f environment.yaml
-conda activate py311_mfd
-```
+~~~sh
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-reporting-linux.txt
+python -m pip install --no-deps .
+python -m reporting.cli --help
+~~~
 
-After activating the environment, install the project in editable mode:
+For the verified macOS CPU environment use requirements-reporting-macos.txt.
+The Linux profile records the available cluster environment; a successful
+clean-install/target-platform check must be recorded separately. Windows has
+not yet been validated.
 
-```bash
-pip install -e .
-```
+## Data and saved models
 
-## Datasets
+Source code and scientific assets are supplied separately. The asset archive
+contains sgda-assets/prepared, sgda-assets/runs/binary-seed42 (and other seeds),
+sgda-assets/runs/multiclass-seed42, and the selected Engine 2 raw files.
+Run commands from this code directory and replace the example absolute paths.
 
-Two datasets of real motor measurements are located under the `dataset/` directory. Each dataset contains multiple experiments with accompanying metadata files:
+~~~sh
+python -m reporting.cli predict --prepared /path/to/sgda-assets/prepared --run /path/to/sgda-assets/runs/binary-seed42 --device cpu --output /path/to/new-results/binary
+python -m reporting.cli prepare --metadata /path/to/sgda-assets/dataset/engine_2/metadata.csv --config training_configs/reporting/binary.yaml --path-base /path/to/sgda-assets/experiments --missing-current legacy-drop --time-axis engine2-legacy --output /path/to/new-results/prepared
+~~~
 
-- **Engine 1** – Collected from a motor model RA180L4/2У3. Measurements include various load conditions and induced faults. Detailed descriptions are available in `dataset/engine_1/README.md`.
-- **Engine 2** – Load variation experiments on four identical motors with different defects. See `dataset/engine_2/README.md` for folder structure and acquisition notes.
+The legacy time-axis profile verifies the original Engine 2 millisecond
+coordinate at 4096 samples/s while preserving the historical FFT configuration
+of 4098 Hz. It does not resample or change the model input. Ordinary new inputs
+use seconds by default; declare --time-axis milliseconds when appropriate.
 
-Each dataset folder also contains an `engine.yml` file describing the motor configuration (power, RPM, sampling rate, etc.).
+## Commands and outputs
 
-## Training
+- prepare validates input formats and time coordinates, then invokes the existing FFT pipeline.
+- synthesize exports SGDA spectra, configuration metadata and plots.
+- predict restores an existing test split and exports metrics, segment scores and majority votes.
+- python -m reporting.diagnose classifies a new unlabelled current file.
+- python -m experiments.train --offline runs the existing training workflow.
 
-Model training is performed using the script `experiments/train.py`. Training behavior is controlled through YAML configuration files in `training_configs/`. A configuration specifies the data source, the type of task (binary or multiclass classification) and all preprocessing and model parameters.
+Prediction CSV files include logit_i and probability_i in the class order
+recorded by the JSON receipt. Record summaries contain mean scores and vote
+fractions; the decision remains majority voting. Softmax values are not a
+claim of empirical probability calibration.
 
-Example command for Engine 2 binary classification:
+See [the Russian usage guide](docs/reporting/usage.md) for detailed commands
+and artifact contracts. Existing checkpoints, split indices and normalizers
+must remain together.
 
-```bash
-cd experiments
-python train.py --cfg train_engine-2.yml
-```
+## Verification
 
-During training an experiment directory is created inside `res/` containing checkpoints, logs and predictions. The script also supports logging to [Comet ML](https://www.comet.com/) if API credentials are provided in `cfg.yaml`.
+~~~sh
+python -m pytest tests -q
+~~~
 
-## Inference
-
-The `src/inference.py` module provides a helper function to run a trained model on a `DataLoader`. Predictions on the test set are automatically generated at the end of training and saved alongside other results in the experiment directory.
+The reporting release preserves the historical scientific method. A successful
+replay verifies the saved benchmark; the acceptance protocol identifies the
+specific data, model, preprocessing and metric scope.

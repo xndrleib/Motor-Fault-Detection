@@ -28,6 +28,9 @@ from src.data_pipeline import preprocessing
 from src.electrical_signature_frequencies import ANOMALY_FREQS, get_eccentricity_freqs
 from src.models import CNN, ResNet, ResidualBlock
 from src.normalization import Normalizer
+from .input_files import read_current_signal
+from .prediction_export import (probabilities_from_logits, add_segment_scores,
+                                aggregate_scores, export_schema)
 
 FAULTS = ["inter-turn short circuits", "rotor bar defect"]
 REQUIRED_META = {"measurement_id", "base_id", "state", "phase", "load_condition", "experiment", "file_path"}
@@ -117,46 +120,45 @@ def resolve_metadata(metadata, path_base, processing):
     return df.set_index("measurement_id")
 
 
-def validate_measurements(df, segment_length, missing_current="reject"):
-    # Mirrors the supported historical CSV contract: index, Time, Current.
-    # Reject invalid input before the legacy loader can silently drop NaNs.
-    from src.data_pipeline import load_measurement, read_oscilloscope_data
+def validate_measurements(df, segment_length, missing_current="reject",
+                          f_sampling=None, time_axis="seconds", return_reports=False):
     dropped = []
-    if missing_current not in {"reject", "legacy-drop"}:
-        raise ValueError("Неизвестная политика пропусков тока.")
+    reports = []
     for measurement_id, row in df.iterrows():
         try:
-            if Path(row.file_path).suffix.lower() == ".csv":
-                raw = pd.read_csv(row.file_path, header=0, index_col=0).dropna(axis=1, how="all")
-                if raw.shape[1] != 2:
-                    raise ValueError("CSV должен содержать индекс и два поля Time, Current.")
-                arr = raw.apply(pd.to_numeric, errors="raise").to_numpy()
-                if not np.isfinite(arr[:, 0]).all() or np.isinf(arr[:, 1]).any():
-                    raise ValueError("Некорректное время или бесконечный ток.")
-                missing = np.isnan(arr[:, 1])
-                if missing.any() and missing_current == "legacy-drop":
-                    dropped.append({"measurement_id": str(measurement_id),
-                                    "missing_current_rows": np.flatnonzero(missing).tolist()})
-                    arr = arr[~missing]
-            else:
-                raw = read_oscilloscope_data(row.file_path)
-                arr = raw[["Data"]].to_numpy()
-            if len(arr) < segment_length or not np.isfinite(arr).all():
-                raise ValueError("Недостаточно отсчётов либо найдены NaN/Inf.")
+            signal = read_current_signal(row.file_path, phase=row.get("phase", 1),
+                                         sampling_hz=f_sampling, time_axis=time_axis,
+                                         missing_current=missing_current)
+            if len(signal.current) < segment_length:
+                raise ValueError("Недостаточно отсчётов для сегмента.")
+            if signal.dropped_rows:
+                dropped.append({"measurement_id": str(measurement_id),
+                                "missing_current_rows": signal.dropped_rows})
+            reports.append({"measurement_id": str(measurement_id), **signal.time_axis})
         except (ValueError, KeyError, TypeError, pd.errors.ParserError) as e:
             raise ValueError(f"Некорректная запись {measurement_id}: {e}") from e
-    return dropped
+    return (dropped, reports) if return_reports else dropped
 
 
-def prepare(metadata, config, output, path_base, missing_current="reject"):
+def prepare(metadata, config, output, path_base, missing_current="reject", time_axis="seconds"):
     c = load_config(config)
     p = validate_processing(c)
     df = resolve_metadata(metadata, path_base, p)
-    dropped = validate_measurements(df, p["segment_length"], missing_current)
+    dropped, timing = validate_measurements(df, p["segment_length"], missing_current,
+                                           p["f_sampling"], time_axis, return_reports=True)
+    def loader(measurement_id, row):
+        signal = read_current_signal(row.file_path, phase=row.phase,
+                                     sampling_hz=p["f_sampling"], time_axis=time_axis,
+                                     missing_current=missing_current)
+        # Retain the original metadata coordinates: CSV used its Time index,
+        # whereas the oscilloscope ASCII adapter used a RangeIndex.
+        index = signal.source_time if Path(row.file_path).suffix.lower() == ".csv" else None
+        return pd.DataFrame({"Current": signal.source_current}, index=index)
     with new_output(output) as out:
         x, meta, freqs = preprocessing(
             df, str(out), segment_length=p["segment_length"], step=p["shift"],
-            f_sampling=p["f_sampling"], cutoff_freq=p["cutoff_freq"], apply_window=False, db=p["db"])
+            f_sampling=p["f_sampling"], cutoff_freq=p["cutoff_freq"], apply_window=False, db=p["db"],
+            measurement_loader=loader)
         # Preserve the filtered legacy row ordering used by saved split indices.
         meta = meta.reset_index()
         meta.to_csv(out / "segments_metadata.csv", index=False)
@@ -168,6 +170,7 @@ def prepare(metadata, config, output, path_base, missing_current="reject"):
                     "processing_parameters": p, "shape": list(x.shape),
                     "raw_records": len(df), "window_seconds": p["segment_length"] / p["f_sampling"],
                     "missing_current_policy": missing_current, "legacy_dropped_rows": dropped,
+                    "time_axis": time_axis, "time_axis_checks": timing,
                     "inputs": [{"path": r.file_path, "sha256": sha256(r.file_path)}
                                for _, r in df.iterrows()],
                     "segments_sha256": sha256(out / "segments.npy"),
@@ -427,6 +430,7 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
     if not np.isfinite(logits).all():
         raise ValueError("Модель вернула NaN/Inf; диагностический результат не сформирован.")
     preds = logits.argmax(axis=1)
+    probabilities = probabilities_from_logits(logits)
     labels = list(range(len(classes)))
     result = {"operation": "predict", "task": task, "classes": classes,
               "segment_metrics": classification_metrics(y, preds, labels),
@@ -438,6 +442,7 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
               "prepared_manifest_sha256": sha256(Path(prepared) / "manifest.json")}
     test_meta["true_label"], test_meta["prediction"] = y, preds
     test_meta["test_index"] = idx
+    test_meta = add_segment_scores(test_meta, logits, probabilities)
     for load, group in test_meta.groupby("load_condition"):
         result["by_load"][str(load)] = classification_metrics(group.true_label, group.prediction, labels)
     if old is not None:
@@ -450,8 +455,11 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
             raise ValueError(f"Неоднозначная метка записи {base}.")
         # Ties use the smallest class index, made explicit in the receipt.
         vote = int(np.bincount(group.prediction, minlength=len(classes)).argmax())
+        positions = group.index.to_numpy()
         records.append({"base_id":base, "true_label":int(group.true_label.iloc[0]),
-                        "prediction":vote, "segments":len(group)})
+                        "prediction":vote, "segments":len(group),
+                        **aggregate_scores(logits[positions], probabilities[positions],
+                                           group.prediction.to_numpy())})
     records = pd.DataFrame(records)
     result["record_metrics"] = classification_metrics(records.true_label, records.prediction, labels)
     result["voting"] = {"group":"base_id", "rule":"majority", "ties":"smallest class index",
@@ -460,5 +468,7 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
         test_meta.to_csv(out / "predictions.csv", index=False)
         records.to_csv(out / "record_predictions.csv", index=False)
         np.save(out / "logits.npy", logits)
+        np.save(out / "probabilities.npy", probabilities)
+        result["score_export"] = export_schema(classes)
         write_json(out / "metrics.json", result)
     return result

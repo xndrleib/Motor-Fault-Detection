@@ -6,11 +6,14 @@ import numpy as np
 import pandas as pd
 import torch
 from .core import load_config, build_model, new_output, sha256, write_json, runtime, validate_processing
-from src.data_pipeline import segment_signal, perform_fft_on_segments, read_oscilloscope_data
+from src.data_pipeline import segment_signal, perform_fft_on_segments
 from src.normalization import Normalizer
+from .input_files import read_current_signal, TIME_AXES
+from .prediction_export import (probabilities_from_logits, add_segment_scores,
+                                aggregate_scores, export_schema)
 
 
-def diagnose(input, run, output, phase=1, device="cpu", batch_size=128):
+def diagnose(input, run, output, phase=1, device="cpu", batch_size=128, time_axis="seconds"):
     begin=time.perf_counter()
     path=Path(input)
     if phase not in [1,2,3] or batch_size < 1:
@@ -20,30 +23,10 @@ def diagnose(input, run, output, phase=1, device="cpu", batch_size=128):
     root=Path(run)
     cfg=load_config(root/"training_config.yaml")
     p=validate_processing(cfg)
-    if path.suffix.lower()==".csv":
-        df=pd.read_csv(path)
-        if "Current" in df and "Time" in df:
-            time_values=pd.to_numeric(df.Time,errors="raise").to_numpy()
-            current=pd.to_numeric(df.Current,errors="raise").to_numpy()
-        elif f"I{phase}" in df and "Time" in df:
-            time_values=pd.to_numeric(df.Time,errors="raise").to_numpy()
-            current=pd.to_numeric(df[f"I{phase}"],errors="raise").to_numpy()
-        else:
-            df=pd.read_csv(path,index_col=0).dropna(axis=1,how="all")
-            if df.shape[1]!=2:
-                raise ValueError("Ожидается CSV Time,Current; Time,I1,I2,I3; либо исторический CSV с индексом.")
-            values=df.apply(pd.to_numeric,errors="raise").to_numpy()
-            time_values,current=values[:,0],values[:,1]
-    elif path.suffix.lower()==".txt":
-        df=read_oscilloscope_data(path)
-        time_values=np.asarray(df.Time,dtype=float)
-        current=np.asarray(df.Data,dtype=float)
-    else:
-        raise ValueError("Поддерживаются .csv и .txt.")
-    if len(current)<p["segment_length"] or not np.isfinite(current).all() or not np.isfinite(time_values).all():
+    signal=read_current_signal(path,phase=phase,sampling_hz=p["f_sampling"],time_axis=time_axis)
+    current=signal.current
+    if len(current)<p["segment_length"]:
         raise ValueError("Недостаточно отсчётов или обнаружены NaN/Inf.")
-    if np.any(np.diff(time_values)<=0):
-        raise ValueError("Отсчёты времени должны строго возрастать.")
     prep_start=time.perf_counter()
     windows=segment_signal(current,p["segment_length"],step=p["shift"],apply_window=False)
     spectra,freqs=perform_fft_on_segments(windows,f_sampling=p["f_sampling"],cutoff_freq=p["cutoff_freq"],db=p["db"])
@@ -62,7 +45,7 @@ def diagnose(input, run, output, phase=1, device="cpu", batch_size=128):
     model.load_state_dict(pkg.get("state_dict",pkg.get("state",pkg)),strict=True)
     model.to(device).eval()
     torch.set_num_threads(4)
-    predictions=[]
+    outputs=[]
     def sync():
         if device=="cuda": torch.cuda.synchronize()
         elif device=="mps": torch.mps.synchronize()
@@ -73,9 +56,11 @@ def diagnose(input, run, output, phase=1, device="cpu", batch_size=128):
             logits=model(data)
             if not torch.isfinite(logits).all():
                 raise ValueError("Модель вернула NaN/Inf; диагностический результат не сформирован.")
-            predictions.extend(logits.argmax(1).cpu().tolist())
+            outputs.append(logits.cpu().numpy())
     sync(); inference_elapsed=time.perf_counter()-inference_start
-    predictions=np.array(predictions,dtype=int)
+    logits=np.concatenate(outputs)
+    probabilities=probabilities_from_logits(logits)
+    predictions=logits.argmax(axis=1)
     vote=int(np.bincount(predictions,minlength=len(classes)).argmax())
     starts=np.arange(len(spectra))*p["shift"]/p["f_sampling"]
     result={"operation":"diagnose","task":task,"input_sha256":sha256(path),
@@ -89,11 +74,18 @@ def diagnose(input, run, output, phase=1, device="cpu", batch_size=128):
             "inference_seconds_including_transfer":inference_elapsed,
             "total_seconds_including_loading":time.perf_counter()-begin,
             "device":device,"runtime":runtime(),
-            "metrics":None,"metrics_reason":"input is unlabelled; no accuracy is inferred"}
+            "metrics":None,"metrics_reason":"input is unlabelled; no accuracy is inferred",
+            "time_axis_check":signal.time_axis,"score_export":export_schema(classes),
+            "record_scores":aggregate_scores(logits,probabilities,predictions)}
     with new_output(output) as out:
-        pd.DataFrame({"segment_idx":np.arange(len(spectra)),"start_seconds":starts,
+        frame=pd.DataFrame({"segment_idx":np.arange(len(spectra)),"start_seconds":starts,
                       "end_seconds":starts+p["segment_length"]/p["f_sampling"],
-                      "prediction":predictions,"prediction_state":[classes[i] for i in predictions]}).to_csv(out/"predictions.csv",index=False)
+                      "prediction":predictions,"prediction_state":[classes[i] for i in predictions]})
+        add_segment_scores(frame,logits,probabilities).to_csv(out/"predictions.csv",index=False)
+        pd.DataFrame([{"input_file":path.name,"prediction":vote,"prediction_state":classes[vote],
+                       "segments":len(predictions),**result["record_scores"]}]).to_csv(out/"record_predictions.csv",index=False)
+        np.save(out/"logits.npy",logits)
+        np.save(out/"probabilities.npy",probabilities)
         write_json(out/"diagnosis.json",result)
     return result
 
@@ -104,6 +96,7 @@ def main():
     p.add_argument("--run",required=True)
     p.add_argument("--output",required=True)
     p.add_argument("--phase",type=int,default=1)
+    p.add_argument("--time-axis",choices=TIME_AXES,default="seconds")
     p.add_argument("--device",choices=["cpu","cuda","mps"],default="cpu")
     p.add_argument("--batch-size",type=int,default=128)
     try:

@@ -149,6 +149,15 @@ def test_new_file_formats_and_current_checkpoint_agree(tmp_path):
         result=diagnose(path,run,tmp_path/f"out-{i}",phase=phase)
         assert result["segments"] == 1
         assert result["metrics"] is None
+        out=tmp_path/f"out-{i}"
+        frame=pd.read_csv(out/"predictions.csv")
+        logits=np.load(out/"logits.npy")
+        scores=np.load(out/"probabilities.npy")
+        assert frame[["logit_0","logit_1"]].to_numpy() == pytest.approx(logits)
+        assert frame[["probability_0","probability_1"]].to_numpy() == pytest.approx(scores)
+        assert np.allclose(scores.sum(axis=1),1)
+        assert np.array_equal(frame.prediction.to_numpy(),logits.argmax(axis=1))
+        assert (out/"record_predictions.csv").is_file()
         results.append(result["prediction"])
     assert len(set(results)) == 1
     np.savetxt(ascii_path,np.column_stack([time_values[::-1],current]),delimiter=";")

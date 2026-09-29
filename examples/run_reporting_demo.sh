@@ -12,6 +12,7 @@ python -m reporting.cli prepare \
   --config "$sgda_run/training_config.yaml" \
   --path-base "$sgda_source/experiments" \
   --missing-current legacy-drop \
+  --time-axis engine2-legacy \
   --output "$sgda_output/prepared"
 python -m reporting.cli synthesize \
   --prepared "$sgda_output/prepared" \

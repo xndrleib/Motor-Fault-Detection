@@ -3,6 +3,7 @@ import argparse
 import json
 import sys
 from .core import prepare, synthesize, predict
+from .input_files import TIME_AXES
 
 
 def main():
@@ -12,6 +13,8 @@ def main():
     p.add_argument("--metadata", required=True)
     p.add_argument("--config", required=True)
     p.add_argument("--path-base", required=True, help="База относительных file_path из metadata.")
+    p.add_argument("--time-axis", choices=TIME_AXES, default="seconds",
+                   help="Единицы Time; engine2-legacy проверяет исходную сетку и сохраняет историческую FFT-конфигурацию.")
     p.add_argument("--missing-current", choices=["reject", "legacy-drop"], default="reject",
                    help="legacy-drop явно воспроизводит dropna исходного конвейера; пропуски записываются в manifest.")
     p.add_argument("--output", required=True)
