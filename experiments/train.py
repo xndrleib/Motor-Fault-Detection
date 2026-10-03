@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import logging
 import os
 import shutil
@@ -74,7 +75,7 @@ from src.sgda_peak_selection import (
     select_peak_frequencies,
 )
 from src.noise_policy import NoisePolicy
-from src.utils import set_all_seeds, load_yaml
+from src.utils import set_all_seeds, load_yaml, configure_deterministic_operations
 from src.experiment_logging import LocalExperiment
 
 
@@ -481,7 +482,10 @@ def main() -> None:
     parser.add_argument("--path-base", type=str, help="Base for relative metadata file_path values.")
     parser.add_argument("--prepared-dir", type=str, help="Verified output of reporting.cli prepare.")
     parser.add_argument("--device", choices=["cpu", "mps", "cuda"], help="Explicit execution device.")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="Require deterministic operations for fixed-seed repeatability checks.")
     args = parser.parse_args()
+    reproducibility = configure_deterministic_operations() if args.deterministic else None
 
     # Load training configuration
     train_params = load_yaml(args.cfg)
@@ -524,6 +528,11 @@ def main() -> None:
     )
 
     set_all_seeds(train_params.get("seed", 42))
+    if reproducibility is not None:
+        reproducibility.update(seed=train_params.get("seed", 42), torch=str(torch.__version__),
+                               cuda_runtime=torch.version.cuda, threads=torch.get_num_threads())
+        (exp_dir / "reproducibility.json").write_text(json.dumps(reproducibility, indent=2) + "\n")
+        logging.info("Deterministic operations enabled; settings saved in reproducibility.json")
     device_str = args.device or (
         "cuda"
         if torch.cuda.is_available()

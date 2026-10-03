@@ -18,6 +18,27 @@ from torch.optim.lr_scheduler import _LRScheduler as LRScheduler  # type: ignore
 logger = logging.getLogger(__name__)
 
 
+def configure_deterministic_operations():
+    """Require repeatable algorithms without changing seeds or stochastic layers.
+
+    Call in a fresh training process before CUDA initialization. Unsupported
+    nondeterministic operations raise an error instead of silently continuing.
+    """
+    workspace = ":4096:8"
+    if torch.cuda.is_initialized() and os.environ.get("CUBLAS_WORKSPACE_CONFIG") != workspace:
+        raise RuntimeError("Enable deterministic operations before CUDA initialization in a fresh process.")
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = workspace
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True)
+    return {
+        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+        "cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+        "cublas_workspace_config": workspace,
+    }
+
+
 def set_all_seeds(seed=42):
     random.seed(seed)
     np.random.seed(seed)

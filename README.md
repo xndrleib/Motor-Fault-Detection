@@ -1,6 +1,6 @@
 # SGDA MotorDiag reporting release
 
-Version 0.1.3. This branch packages the SGDA implementation for reproducible
+Version 0.1.4. This branch packages the SGDA implementation for reproducible
 preparation, synthesis and inference. The evaluated benchmark uses Engine 2,
 phase 1, load 100%, and Normal / ITSC / RBD.
 
