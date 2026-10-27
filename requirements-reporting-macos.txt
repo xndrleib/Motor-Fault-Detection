@@ -1,4 +1,4 @@
-# Exact versions used for local restoration and verification, Python 3.11.11.
+# Fixed CPU dependency profile for Python 3.11 on macOS.
 torch==2.7.0
 numpy==1.26.4
 pandas==2.2.3

@@ -13,6 +13,7 @@ def main():
     p.add_argument("--prepared",required=True)
     p.add_argument("--engine",required=True)
     p.add_argument("--output",required=True)
+    p.add_argument("--format",choices=["text","json"],default="text")
     a=p.parse_args()
     out=Path(a.output)
     out.mkdir(parents=True,exist_ok=False)
@@ -79,7 +80,9 @@ def main():
                 "verdict_under_stated_interpretation": "pass" if max(deviations)<=0.08 else "fail",
                 "measurements":measured}}
     write_json(out/"functional-report.json",report)
-    print(json.dumps(report,ensure_ascii=False,indent=2))
+    from reporting.output_views import format_verification
+    print(json.dumps(report,ensure_ascii=False,indent=2) if a.format=="json"
+          else format_verification(report,vars(a)))
 
 
 if __name__=="__main__":

@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "motor_fault_detection"
-version = "0.1.4"
+version = "0.1.5"
 description = "A pipeline for detecting anomalies in motor operations using signal processing and machine learning."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 
 [project.scripts]
 sgda-motordiag = "reporting.cli:main"

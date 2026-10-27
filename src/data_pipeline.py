@@ -133,7 +133,7 @@ def preprocessing(
     freqs: Optional[np.ndarray] = None
 
     for m_id, meta in tqdm(
-        metadata_df.iterrows(), total=len(metadata_df), desc="pre-processing"
+        metadata_df.iterrows(), total=len(metadata_df), desc="Обработка записей"
     ):
         suffix = Path(meta["file_path"]).suffix.lower()
         if measurement_loader is not None:
@@ -625,7 +625,7 @@ def create_dataset(
     X_test_raw = np.array(test_segments, dtype=np.float32)
 
     if normalization_method:
-        # TODO: Replace by Normalizer
+        # Normalize the spectrum before storing it.
         X_train = np.array(
             [
                 normalize_segment(seg, method=normalization_method)[0]

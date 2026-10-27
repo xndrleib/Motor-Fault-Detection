@@ -31,6 +31,7 @@ from src.normalization import Normalizer
 from .input_files import read_current_signal
 from .prediction_export import (probabilities_from_logits, add_segment_scores,
                                 aggregate_scores, export_schema)
+from .output_views import save_prepared_preview, save_synthetic_view, save_metric_table
 
 FAULTS = ["inter-turn short circuits", "rotor bar defect"]
 REQUIRED_META = {"measurement_id", "base_id", "state", "phase", "load_condition", "experiment", "file_path"}
@@ -176,6 +177,7 @@ def prepare(metadata, config, output, path_base, missing_current="reject", time_
                     "segments_sha256": sha256(out / "segments.npy"),
                     "metadata_output_sha256": sha256(out / "segments_metadata.csv"),
                     "frequencies_sha256": sha256(out / "freqs.npy")}
+        manifest["preview"] = save_prepared_preview(out, x, freqs, meta, p["db"])
         write_json(out / "manifest.json", manifest)
     return manifest
 
@@ -230,12 +232,17 @@ def diagnostic_frequencies(engine, fault, orders=(1, 2, 3), eccentricity_method=
 
 def synthesize(prepared, engine, fault, output, seed=42, count=10,
                orders=(1, 2, 3), eccentricity_method="slot-based", normalizer_path=None,
-               peak_position="diagnostic"):
+               peak_position="diagnostic", synthesis_config=None):
     operation_start = time.perf_counter()
     x, meta, freqs, manifest = load_prepared(prepared)
     if count < 1:
         raise ValueError("count должен быть положительным.")
-    p = manifest["processing_parameters"]
+    p = dict(manifest["processing_parameters"])
+    if synthesis_config is not None:
+        generation = load_config(synthesis_config)
+        if set(generation) != {"include_negative_peaks"} or not isinstance(generation["include_negative_peaks"], bool):
+            raise ValueError("Конфигурация синтеза должна содержать только логический параметр include_negative_peaks.")
+        p["include_negative_peaks"] = generation["include_negative_peaks"]
     fault_freqs = diagnostic_frequencies(load_config(engine), fault, orders, eccentricity_method)
     outside = [f for f in fault_freqs if not freqs[0] <= f <= freqs[-1]]
     if outside:
@@ -299,19 +306,12 @@ def synthesize(prepared, engine, fault, output, seed=42, count=10,
             if not np.isfinite(normalized).all():
                 raise ValueError("Нормализация создала NaN/Inf; проверьте статистики обучающей выборки.")
             np.save(out / "synthetic_normalized.npy", normalized)
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(8, 3.5))
-        ax.plot(freqs, x[source_rows[0]], label="Normal", linewidth=1)
-        ax.plot(freqs, generated[0], label="SGDA", linewidth=1, alpha=0.85)
-        ax.set(xlabel="Frequency, Hz", ylabel="Spectrum, dB" if p["db"] else "FFT magnitude")
-        ax.legend(); fig.tight_layout()
-        fig.savefig(out / "spectrum.png", dpi=180)
-        fig.savefig(out / "spectrum.pdf")
-        plt.close(fig)
+        save_synthetic_view(out, x[source_rows[0]], generated[0], freqs,
+                            selected.iloc[0], fault_freqs, p["db"])
         receipt = {"operation": "synthesize", "seed": seed, "fault": fault, "count": count,
                    "peak_position": peak_position,
+                   "include_negative_peaks": p["include_negative_peaks"],
+                   "synthesis_config_sha256": sha256(synthesis_config) if synthesis_config else None,
                    "peak_half_width_hz": p["peak_segment"],
                    "center_definition": "continuous Gaussian centre in Hz" if peak_position == "diagnostic" else "configured FFT-window position",
                    "orders": list(orders), "eccentricity_method": eccentricity_method,
@@ -445,6 +445,7 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
     probabilities = probabilities_from_logits(logits)
     labels = list(range(len(classes)))
     result = {"operation": "predict", "task": task, "classes": classes,
+              "evaluated_windows": len(idx),
               "segment_metrics": classification_metrics(y, preds, labels),
               "runtime": runtime(), "device": device, "batch_size": batch_size,
               "inference_seconds_including_transfer": elapsed,
@@ -482,5 +483,6 @@ def predict(prepared, run, output, device="cpu", batch_size=128):
         np.save(out / "logits.npy", logits)
         np.save(out / "probabilities.npy", probabilities)
         result["score_export"] = export_schema(classes)
+        save_metric_table(out, result["segment_metrics"])
         write_json(out / "metrics.json", result)
     return result

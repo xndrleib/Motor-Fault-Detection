@@ -99,8 +99,14 @@ def main():
     p.add_argument("--time-axis",choices=TIME_AXES,default="seconds")
     p.add_argument("--device",choices=["cpu","cuda","mps"],default="cpu")
     p.add_argument("--batch-size",type=int,default=128)
+    p.add_argument("--format",choices=["text","json"],default="text")
     try:
-        print(__import__("json").dumps(diagnose(**vars(p.parse_args())),ensure_ascii=False,indent=2))
+        from .output_views import format_diagnosis
+        arguments=vars(p.parse_args())
+        output_format=arguments.pop("format")
+        result=diagnose(**arguments)
+        print(__import__("json").dumps(result,ensure_ascii=False,indent=2) if output_format=="json"
+              else format_diagnosis(result,arguments))
     except (ValueError,KeyError,OSError,TypeError,RuntimeError) as e:
         p.exit(2,f"Ошибка: {e}\n")
 
