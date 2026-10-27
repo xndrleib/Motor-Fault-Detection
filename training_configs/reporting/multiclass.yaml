@@ -1,3 +1,7 @@
+input_parameters:
+  time_unit: milliseconds
+  sampling_hz: 4096
+  missing_current: drop
 comet_online: false
 data_parameters:
   batch_size: 4096

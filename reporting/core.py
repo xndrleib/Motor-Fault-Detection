@@ -6,6 +6,7 @@ are committed only after the operation succeeds. Source datasets are read-only.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import asdict
 import hashlib
 import json
 import math
@@ -28,7 +29,7 @@ from src.data_pipeline import preprocessing
 from src.electrical_signature_frequencies import ANOMALY_FREQS, get_eccentricity_freqs
 from src.models import CNN, ResNet, ResidualBlock
 from src.normalization import Normalizer
-from .input_files import read_current_signal
+from .input_files import read_current_signal, resolve_input_parameters
 from .prediction_export import (probabilities_from_logits, add_segment_scores,
                                 aggregate_scores, export_schema)
 from .output_views import save_prepared_preview, save_synthetic_view, save_metric_table
@@ -122,14 +123,16 @@ def resolve_metadata(metadata, path_base, processing):
 
 
 def validate_measurements(df, segment_length, missing_current="reject",
-                          f_sampling=None, time_axis="seconds", return_reports=False):
+                          f_sampling=None, time_axis="seconds", return_reports=False,
+                          source_sampling_hz=None):
     dropped = []
     reports = []
     for measurement_id, row in df.iterrows():
         try:
             signal = read_current_signal(row.file_path, phase=row.get("phase", 1),
                                          sampling_hz=f_sampling, time_axis=time_axis,
-                                         missing_current=missing_current)
+                                         missing_current=missing_current,
+                                         source_sampling_hz=source_sampling_hz)
             if len(signal.current) < segment_length:
                 raise ValueError("Недостаточно отсчётов для сегмента.")
             if signal.dropped_rows:
@@ -141,16 +144,20 @@ def validate_measurements(df, segment_length, missing_current="reject",
     return (dropped, reports) if return_reports else dropped
 
 
-def prepare(metadata, config, output, path_base, missing_current="reject", time_axis="seconds"):
+def prepare(metadata, config, output, path_base, missing_current=None, time_axis=None):
     c = load_config(config)
     p = validate_processing(c)
+    inputs = resolve_input_parameters(c, time_axis=time_axis, missing_current=missing_current)
+    missing_current, time_axis = inputs.missing_current, inputs.time_unit
     df = resolve_metadata(metadata, path_base, p)
     dropped, timing = validate_measurements(df, p["segment_length"], missing_current,
-                                           p["f_sampling"], time_axis, return_reports=True)
+                                           p["f_sampling"], time_axis, return_reports=True,
+                                           source_sampling_hz=inputs.sampling_hz)
     def loader(measurement_id, row):
         signal = read_current_signal(row.file_path, phase=row.phase,
                                      sampling_hz=p["f_sampling"], time_axis=time_axis,
-                                     missing_current=missing_current)
+                                     missing_current=missing_current,
+                                     source_sampling_hz=inputs.sampling_hz)
         # Retain the original metadata coordinates: CSV used its Time index,
         # whereas the oscilloscope ASCII adapter used a RangeIndex.
         index = signal.source_time if Path(row.file_path).suffix.lower() == ".csv" else None
@@ -171,6 +178,7 @@ def prepare(metadata, config, output, path_base, missing_current="reject", time_
                     "processing_parameters": p, "shape": list(x.shape),
                     "raw_records": len(df), "window_seconds": p["segment_length"] / p["f_sampling"],
                     "missing_current_policy": missing_current, "legacy_dropped_rows": dropped,
+                    "input_parameters": asdict(inputs), "dropped_current_rows": dropped,
                     "time_axis": time_axis, "time_axis_checks": timing,
                     "inputs": [{"path": r.file_path, "sha256": sha256(r.file_path)}
                                for _, r in df.iterrows()],

@@ -14,10 +14,10 @@ def main():
     p.add_argument("--metadata", required=True)
     p.add_argument("--config", required=True)
     p.add_argument("--path-base", required=True, help="База относительных file_path из metadata.")
-    p.add_argument("--time-axis", choices=TIME_AXES, default="seconds",
-                   help="Единицы Time; engine2-legacy проверяет исходную сетку и сохраняет историческую FFT-конфигурацию.")
-    p.add_argument("--missing-current", choices=["reject", "legacy-drop"], default="reject",
-                   help="legacy-drop явно воспроизводит dropna исходного конвейера; пропуски записываются в manifest.")
+    p.add_argument("--time-axis", choices=TIME_AXES, default=None, metavar="UNIT",
+                   help="Единицы времени: seconds или milliseconds; по умолчанию из input_parameters.")
+    p.add_argument("--missing-current", choices=["reject", "drop", "legacy-drop"], default=None, metavar="POLICY",
+                   help="Обработка пропусков: reject или drop; по умолчанию из input_parameters.")
     p.add_argument("--output", required=True)
     s = sub.add_parser("synthesize")
     s.add_argument("--prepared", required=True)

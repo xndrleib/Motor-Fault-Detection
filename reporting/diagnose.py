@@ -8,12 +8,14 @@ import torch
 from .core import load_config, build_model, new_output, sha256, write_json, runtime, validate_processing
 from src.data_pipeline import segment_signal, perform_fft_on_segments
 from src.normalization import Normalizer
-from .input_files import read_current_signal, TIME_AXES
+from .input_files import read_current_signal, resolve_input_parameters, TIME_AXES
+from dataclasses import asdict
 from .prediction_export import (probabilities_from_logits, add_segment_scores,
                                 aggregate_scores, export_schema)
 
 
-def diagnose(input, run, output, phase=1, device="cpu", batch_size=128, time_axis="seconds"):
+def diagnose(input, run, output, phase=1, device="cpu", batch_size=128, time_axis=None,
+             input_config=None, missing_current=None):
     begin=time.perf_counter()
     path=Path(input)
     if phase not in [1,2,3] or batch_size < 1:
@@ -23,7 +25,12 @@ def diagnose(input, run, output, phase=1, device="cpu", batch_size=128, time_axi
     root=Path(run)
     cfg=load_config(root/"training_config.yaml")
     p=validate_processing(cfg)
-    signal=read_current_signal(path,phase=phase,sampling_hz=p["f_sampling"],time_axis=time_axis)
+    input_cfg=load_config(input_config) if input_config else cfg
+    if input_config and "processing_parameters" in input_cfg and input_cfg["processing_parameters"]!=p:
+        raise ValueError("Параметры обработки входа не совпадают с конфигурацией модели.")
+    inputs=resolve_input_parameters(input_cfg,time_axis=time_axis,missing_current=missing_current)
+    signal=read_current_signal(path,phase=phase,sampling_hz=p["f_sampling"],time_axis=inputs.time_unit,
+                               missing_current=inputs.missing_current,source_sampling_hz=inputs.sampling_hz)
     current=signal.current
     if len(current)<p["segment_length"]:
         raise ValueError("Недостаточно отсчётов или обнаружены NaN/Inf.")
@@ -76,6 +83,7 @@ def diagnose(input, run, output, phase=1, device="cpu", batch_size=128, time_axi
             "device":device,"runtime":runtime(),
             "metrics":None,"metrics_reason":"input is unlabelled; no accuracy is inferred",
             "time_axis_check":signal.time_axis,"score_export":export_schema(classes),
+            "input_parameters":asdict(inputs),"dropped_current_rows":signal.dropped_rows,
             "record_scores":aggregate_scores(logits,probabilities,predictions)}
     with new_output(output) as out:
         frame=pd.DataFrame({"segment_idx":np.arange(len(spectra)),"start_seconds":starts,
@@ -96,7 +104,9 @@ def main():
     p.add_argument("--run",required=True)
     p.add_argument("--output",required=True)
     p.add_argument("--phase",type=int,default=1)
-    p.add_argument("--time-axis",choices=TIME_AXES,default="seconds")
+    p.add_argument("--time-axis",choices=TIME_AXES,default=None,metavar="UNIT")
+    p.add_argument("--input-config",help="YAML эксперимента с разделом input_parameters.")
+    p.add_argument("--missing-current",choices=["reject","drop","legacy-drop"],default=None,metavar="POLICY")
     p.add_argument("--device",choices=["cpu","cuda","mps"],default="cpu")
     p.add_argument("--batch-size",type=int,default=128)
     p.add_argument("--format",choices=["text","json"],default="text")

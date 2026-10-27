@@ -1,11 +1,47 @@
 """Current-file parsing and time-axis validation; no resampling or signal repair."""
 from dataclasses import dataclass
 from pathlib import Path
+import math
 
 import numpy as np
 import pandas as pd
 
 TIME_AXES = ("seconds", "milliseconds", "engine2-legacy")
+
+
+@dataclass(frozen=True)
+class InputParameters:
+    time_unit: str = "seconds"
+    sampling_hz: float | None = None
+    missing_current: str = "reject"
+
+
+def resolve_input_parameters(config, *, time_axis=None, missing_current=None):
+    """Read the experiment's input contract; explicit CLI options take priority."""
+    values = config.get("input_parameters", {})
+    if not isinstance(values, dict):
+        raise ValueError("input_parameters должен быть YAML-словарём.")
+    extra = set(values) - {"time_unit", "sampling_hz", "missing_current"}
+    if extra:
+        raise ValueError(f"Неизвестные параметры чтения: {sorted(extra)}")
+    unit = values.get("time_unit", "seconds") if time_axis is None else time_axis
+    rate = values.get("sampling_hz")
+    # Keep the old explicit option as an input alias for existing callers.
+    if unit == "engine2-legacy":
+        if config.get("processing_parameters", {}).get("f_sampling") != 4098:
+            raise ValueError("Прежний профиль требует расчётную частоту БПФ 4098 Гц")
+        unit, rate = "milliseconds", 4096
+    if unit not in ("seconds", "milliseconds"):
+        raise ValueError("time_unit должен быть seconds или milliseconds.")
+    if rate is not None:
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate <= 0:
+            raise ValueError("input_parameters.sampling_hz должен быть положительным конечным числом.")
+    policy = values.get("missing_current", "reject") if missing_current is None else missing_current
+    if policy == "legacy-drop":
+        policy = "drop"
+    if policy not in ("reject", "drop"):
+        raise ValueError("missing_current должен быть reject или drop.")
+    return InputParameters(unit, rate, policy)
 
 
 @dataclass
@@ -46,7 +82,7 @@ def _ascii_columns(path, phase):
     return data[:, 0], data[:, 1 if data.shape[1] == 2 else phase]
 
 
-def validate_time_axis(time, sampling_hz, profile):
+def validate_time_axis(time, sampling_hz, profile, source_sampling_hz=None):
     if profile not in TIME_AXES:
         raise ValueError(f"Неизвестный time_axis: {profile}")
     if len(time) < 2 or not np.isfinite(time).all():
@@ -57,13 +93,15 @@ def validate_time_axis(time, sampling_hz, profile):
     if np.any(steps <= 0):
         raise ValueError("Отсчёты времени должны строго возрастать")
     observed = float((len(seconds) - 1) / (seconds[-1] - seconds[0]))
-    if sampling_hz is not None:
+    if sampling_hz is not None or source_sampling_hz is not None:
         if profile == "engine2-legacy":
             if sampling_hz != 4098:
                 raise ValueError("engine2-legacy требует историческую конфигурацию FFT 4098 Гц")
             expected_hz = 4096.0
         else:
-            expected_hz = float(sampling_hz)
+            expected_hz = float(source_sampling_hz if source_sampling_hz is not None else sampling_hz)
+        if not math.isfinite(expected_hz) or expected_hz <= 0:
+            raise ValueError("Частота исходной записи должна быть положительной и конечной.")
         # A 0.5% per-step allowance admits microsecond text rounding at 4098 Hz.
         # The stricter whole-record bound rejects a different acquisition rate.
         if not np.isclose(observed, expected_hz, rtol=1e-4, atol=0):
@@ -72,18 +110,21 @@ def validate_time_axis(time, sampling_hz, profile):
             raise ValueError("Неравномерная временная сетка или пропущенные отсчёты времени")
     return {"profile": profile, "input_time_unit": "s" if scale == 1 else "ms",
             "observed_sampling_hz": observed, "analysis_sampling_hz": sampling_hz,
+            "declared_sampling_hz": source_sampling_hz,
             "legacy_analysis_frequency_preserved": profile == "engine2-legacy",
             "resampled": False}
 
 
 def read_current_signal(path, phase=1, sampling_hz=None, time_axis="seconds",
-                        missing_current="reject"):
+                        missing_current="reject", source_sampling_hz=None):
     path = Path(path)
     try:
         if phase not in (1, 2, 3):
             raise ValueError("Фаза должна быть 1, 2 или 3")
         phase = int(phase)
-        if missing_current not in ("reject", "legacy-drop"):
+        if missing_current == "legacy-drop":
+            missing_current = "drop"
+        if missing_current not in ("reject", "drop"):
             raise ValueError("Неизвестная политика пропусков тока")
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError("Файл тока отсутствует или пуст")
@@ -103,11 +144,11 @@ def read_current_signal(path, phase=1, sampling_hz=None, time_axis="seconds",
             times, current = _ascii_columns(path, phase)
         else:
             raise ValueError("Поддерживаются .csv и .txt")
-        timing = validate_time_axis(times, sampling_hz, time_axis)
+        timing = validate_time_axis(times, sampling_hz, time_axis, source_sampling_hz)
         if np.isinf(current).any():
             raise ValueError("Бесконечные значения тока")
         missing = np.flatnonzero(np.isnan(current)).tolist()
-        if missing and missing_current != "legacy-drop":
+        if missing and missing_current != "drop":
             raise ValueError("NaN в значениях тока")
         keep = np.isfinite(current)
         return CurrentSignal(times[keep], current[keep], missing, timing, times, current)
